@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== 用户 ==========
+model User {
+  id        String   @id @default(uuid())
+  githubId  String   @unique
+  name      String
+  email     String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reviews  Review[]
+  policies ReviewPolicy[]
+}
+
+// ========== 审查记录 ==========
+model Review {
+  id            String   @id @default(uuid())
+  prUrl         String
+  prTitle       String
+  repoName      String
+  branchFrom    String
+  branchTo      String
+  status        String   @default("PENDING") // PENDING | FETCHING | ANALYZING | SUGGESTING | COMPLETED | FAILED
+  summary       String?  @db.Text           // PR 变更总结 (markdown)
+  metadata      Json?                       // { filesChanged, additions, deletions }
+  overallScore  Float?                      // 综合评分 0-100
+  decision      String?                     // APPROVE | COMMENT | REQUEST_CHANGES
+  decisionReason String? @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id])
+  policyId     String?
+  policy       ReviewPolicy? @relation(fields: [policyId], references: [id])
+  stageResults StageResult[]
+  issues       ReviewIssue[]
+  contextFiles ContextFile[]
+
+  @@index([userId])
+  @@index([repoName])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ========== 阶段审查结果 ==========
+model StageResult {
+  id       String @id @default(uuid())
+  stage    String // SUMMARY | BACKEND_SECURITY | BACKEND_LOGIC | ...
+  status   String // PASSED | WARNING | FAILED
+  summary  String @db.Text
+  score    Float  // 0-100
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  issues ReviewIssue[]
+
+  @@index([reviewId])
+}
+
+// ========== 代码问题 ==========
+model ReviewIssue {
+  id          String @id @default(uuid())
+  filePath    String
+  lineStart   Int
+  lineEnd     Int
+  layer       String  // FRONTEND | BACKEND | DATABASE | CONFIG
+  severity    String  // CRITICAL | HIGH | MEDIUM | LOW
+  category    String  // INJECTION | XSS | N_PLUS_ONE | ...
+  title       String
+  description String  @db.Text
+  codeSnippet String  @db.Text
+  suggestion  Json?   // 修复建议 JSON
+  confidence  Float   // 0.0 - 1.0
+  source      String  // rule-engine | semgrep | llm
+  ruleId      String?
+  createdAt   DateTime @default(now())
+
+  reviewId     String
+  review       Review      @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  stageResultId String?
+  stageResult  StageResult? @relation(fields: [stageResultId], references: [id], onDelete: SetNull)
+  feedbacks    Feedback[]
+
+  @@index([reviewId])
+  @@index([severity])
+  @@index([layer])
+}
+
+// ========== 用户反馈 ==========
+model Feedback {
+  id         String   @id @default(uuid())
+  isAccurate Boolean
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now())
+
+  issueId String
+  issue   ReviewIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+// ========== 审查策略 ==========
+model ReviewPolicy {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  config      Json     // ReviewPolicyConfig JSON
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId  String
+  user    User     @relation(fields: [userId], references: [id])
+  reviews Review[]
+
+  @@index([userId])
+}
+
+// ========== 上下文文件索引 ==========
+model ContextFile {
+  id          String   @id @default(uuid())
+  filePath    String
+  fileType    String   // changed | related
+  contentHash String
+  storageKey  String
+  size        Int
+  createdAt   DateTime @default(now())
+
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([contentHash])
+  @@index([filePath])
+}
