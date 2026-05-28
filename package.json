@@ -4,9 +4,10 @@
   "private": true,
   "description": "AI-powered Pull Request review assistant",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbo",
     "build": "next build",
     "start": "next start",
+    "clean": "rm -rf .next",
     "lint": "next lint",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
