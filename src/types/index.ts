@@ -117,7 +117,7 @@ export interface ReviewReport {
   branchFrom: string;
   branchTo: string;
   status: ReviewStatus;
-  summary: ReviewSummary | null;
+  summary: string | null;         // markdown 文本
   stageResults: StageResult[];
   overallScore: number | null;
   decision: Decision | null;
