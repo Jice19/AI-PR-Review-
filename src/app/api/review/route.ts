@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parsePRUrl, GitHubService } from "@/backend/lib/github";
 import { requireAuth } from "@/backend/lib/session";
-import { createReview, updateReviewStatus } from "@/backend/services/review";
+import { createReview, updateReviewStatus, saveIssues } from "@/backend/services/review";
+import { ContextBuilder } from "@/backend/services/context";
+import { runFullAnalysis } from "@/backend/services/analyzer";
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,22 +61,40 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** 后台异步执行 PR 分析 */
+/** 后台异步执行 AI 分析 */
 async function analyzePRInBackground(reviewId: string, prUrl: string) {
   try {
+    // 1. 获取代码上下文
     await updateReviewStatus(reviewId, "FETCHING");
-
     const github = new GitHubService();
-    const prInfo = parsePRUrl(prUrl);
-    const meta = await github.getPRMeta(prInfo.owner, prInfo.repo, prInfo.prNumber);
+    const contextBuilder = new ContextBuilder(github);
+    const context = await contextBuilder.build(prUrl);
 
-    // TODO: Phase 2 - 接入 AI 分析流水线
-    // 目前先走通数据流：创建 context → 写入示例数据
+    // 2. AI 分析
+    await updateReviewStatus(reviewId, "ANALYZING");
+    const result = await runFullAnalysis(context);
 
+    // 3. 保存问题
+    await saveIssues(reviewId, result.issues.map((issue) => ({
+      filePath: issue.filePath,
+      lineStart: issue.lineStart,
+      lineEnd: issue.lineEnd,
+      layer: issue.layer,
+      severity: issue.severity,
+      category: issue.category,
+      title: issue.title,
+      description: issue.description,
+      codeSnippet: issue.codeSnippet,
+      confidence: issue.confidence,
+      source: issue.source,
+    })));
+
+    // 4. 完成
     await updateReviewStatus(reviewId, "COMPLETED", {
-      summary: `## PR 变更总结\n\n本次 PR 修改了 ${meta.filesChanged} 个文件，共 +${meta.additions} -${meta.deletions} 行代码。\n\n*(AI 分析流水线即将在 Phase 2 接入)*`,
-      overallScore: null,
-      decision: null,
+      summary: result.summary,
+      overallScore: result.overallScore,
+      decision: result.decision as "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
+      decisionReason: result.decisionReason,
     });
   } catch (error) {
     console.error(`Review ${reviewId} 分析失败:`, error);
