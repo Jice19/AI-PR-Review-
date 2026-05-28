@@ -1,5 +1,5 @@
 import { Octokit } from "octokit";
-import type { FileContext, Layer, ReviewContext } from "@/types";
+import type { FileContext, Layer, ReviewContext } from "@/backend/types";
 
 // ========== PR URL 解析 ==========
 

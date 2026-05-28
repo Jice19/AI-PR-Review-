@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import type { ReviewStatus, Decision } from "@/types";
+import { prisma } from "@/backend/lib/prisma";
+import type { ReviewStatus, Decision } from "@/backend/types";
 
 export type { ReviewStatus, Decision };
 

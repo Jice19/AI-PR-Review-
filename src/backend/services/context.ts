@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { GitHubService } from "@/lib/github";
-import type { ReviewContext, RelatedContext } from "@/types";
+import { GitHubService } from "@/backend/lib/github";
+import type { ReviewContext, RelatedContext } from "@/backend/types";
 
 export class ContextBuilder {
   constructor(private github: GitHubService) {}

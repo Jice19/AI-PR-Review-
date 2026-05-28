@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/session";
-import { getReview } from "@/services/review";
+import { requireAuth } from "@/backend/lib/session";
+import { getReview } from "@/backend/services/review";
 
 export async function GET(
   _request: NextRequest,

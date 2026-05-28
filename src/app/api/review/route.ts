@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parsePRUrl, GitHubService } from "@/lib/github";
-import { requireAuth } from "@/lib/session";
-import { createReview, updateReviewStatus } from "@/services/review";
+import { parsePRUrl, GitHubService } from "@/backend/lib/github";
+import { requireAuth } from "@/backend/lib/session";
+import { createReview, updateReviewStatus } from "@/backend/services/review";
 
 export async function POST(request: NextRequest) {
   try {
