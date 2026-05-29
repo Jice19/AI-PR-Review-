@@ -1,14 +1,27 @@
 "use client";
 
-import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { signIn, useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export default function LoginPage() {
+  const { data: session } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
+
+  const callbackUrl = searchParams.get("callbackUrl") || "/";
+
+  // 已登录则直接跳转
+  useEffect(() => {
+    if (session) {
+      router.replace(callbackUrl);
+    }
+  }, [session, router, callbackUrl]);
 
   const handleLogin = () => {
     setLoading(true);
-    signIn("github", { callbackUrl: "/" });
+    signIn("github", { callbackUrl });
   };
 
   return (
