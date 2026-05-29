@@ -48,6 +48,16 @@ export async function POST(
       },
     });
 
+    // Fire-and-forget: 异步向量化写入（不阻塞响应）
+    if (process.env.BAILIAN_API_KEY) {
+      const { learnFromFeedback } = await import("@/backend/services/feedback-learner");
+      learnFromFeedback({ issueId }).catch((e: unknown) =>
+        console.error("[FeedbackVector] 异步写入失败:", e instanceof Error ? e.message : e)
+      );
+    } else {
+      console.warn("[FeedbackVector] BAILIAN_API_KEY 未设置，跳过向量化写入");
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof Error && error.message === "Unauthorized") {

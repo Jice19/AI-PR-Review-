@@ -1,4 +1,6 @@
 import { callFlash, callLLMStream } from "@/backend/lib/llm";
+import { formatFeedbackPrompt } from "@/backend/services/feedback-learner";
+import type { FeedbackExample } from "@/backend/services/feedback-learner";
 
 // 文件风险分析使用 Flash（快），建议生成使用 Pro（深）
 import type { ReviewContext, Issue, Suggestion } from "@/backend/types";
@@ -153,11 +155,13 @@ const LAYER_PROMPTS: Record<string, string> = {
 
 /**
  * 分析单个文件的风险
+ * @param feedbackExamples 可选，从 RAG 检索到的历史反馈案例
  */
 export async function analyzeFileRisk(
   file: ReviewContext["files"][0],
   relatedContext: string,
-  audit?: { reviewId: string; stage: string }
+  audit?: { reviewId: string; stage: string },
+  feedbackExamples?: FeedbackExample[]
 ): Promise<Issue[]> {
   const prompt = LAYER_PROMPTS[file.layer] || BACKEND_PROMPT;
 
@@ -166,12 +170,17 @@ export async function analyzeFileRisk(
   const fullContent = file.fullContent.slice(0, maxContentLen);
   const diff = file.diff.slice(0, maxContentLen);
 
+  // 格式化 RAG 反馈案例为 prompt 片段
+  const feedbackSection = feedbackExamples?.length
+    ? `\n## 历史反馈参考\n${formatFeedbackPrompt(feedbackExamples)}\n`
+    : "";
+
   const result = await callFlash<RiskOutput>(
     [
       {
         role: "user",
         content: `${prompt}
-
+${feedbackSection}
 ## 文件信息
 - 路径: ${file.path}
 - 层级: ${file.layer}

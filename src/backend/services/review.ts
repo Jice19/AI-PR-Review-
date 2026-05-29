@@ -174,6 +174,13 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
     const totalFiles = context.files.length;
     console.log(`[Analysis:${reviewId}] Stage 1 完成: ${totalFiles} 个文件, commits: ${context.commits.length}`);
 
+    // Stage 1.5: RAG 反馈预热（用 PR 描述 + 标题做语义检索）
+    const { retrieveFeedbackExamples } = await import("@/backend/services/feedback-learner");
+    const ragQuery = `${context.prTitle}\n${context.prDescription || ""}`.slice(0, 1000);
+    const ragResults = await retrieveFeedbackExamples(ragQuery, "backend"); // 默认检索后端，后续按文件 layer 调整
+    const hasRag = ragResults.length > 0;
+    console.log(`[Analysis:${reviewId}] RAG 预热完成: ${ragResults.length} 条历史反馈命中`);
+
     // Stage 2: 流式总结 + 文件风险分析（增量保存）
     console.log(`[Analysis:${reviewId}] Stage 2: AI 分析中...`);
     emitSSE(reviewId, "phase", { phase: "ANALYZING", label: "AI 分析中..." });
@@ -200,7 +207,7 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
           const related = (context.relatedFiles[file.path] || [])
             .map((r) => `// ${r.path}\n${r.content.slice(0, 3000)}`)
             .join("\n\n");
-          return analyzeFileRisk(file, related, { reviewId, stage: "file-risk" });
+          return analyzeFileRisk(file, related, { reviewId, stage: "file-risk" }, hasRag ? ragResults : undefined);
         })
       );
       const batchIssues = batchResults.flat();

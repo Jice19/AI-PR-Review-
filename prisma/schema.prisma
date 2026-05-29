@@ -137,6 +137,7 @@ model ReviewIssue {
   stageResultId String?
   stageResult  StageResult? @relation(fields: [stageResultId], references: [id], onDelete: SetNull)
   feedbacks    IssueFeedback[]
+  vectors      FeedbackVector[]
 
   @@index([reviewId])
   @@index([severity])
@@ -202,6 +203,23 @@ model ReviewPolicy {
   reviews Review[]
 
   @@index([userId])
+}
+
+// ========== RAG 反馈向量存储 ==========
+model FeedbackVector {
+  id          String   @id @default(uuid())
+  issueId     String
+  feedback    String   // USEFUL | FALSE_POSITIVE
+  layer       String   // FRONTEND | BACKEND | DATABASE | CONFIG
+  codeSnippet String   @db.Text
+  embedding   Unsupported("vector(1024)") // pgvector 向量
+  createdAt   DateTime @default(now())
+
+  issue ReviewIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId])
+  @@index([issueId])
+  @@index([layer])
 }
 
 // ========== 上下文文件索引 ==========
