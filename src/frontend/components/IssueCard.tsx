@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import type { Issue } from "@/backend/types";
+import { useState, useCallback } from "react";
+import type { Issue, FeedbackType } from "@/backend/types";
+
+const FEEDBACK_OPTIONS: { type: FeedbackType; label: string; icon: string; activeClass: string }[] = [
+  { type: "USEFUL", label: "有用", icon: "👍", activeClass: "bg-emerald-50 border-emerald-300 text-emerald-700 ring-1 ring-emerald-300" },
+  { type: "FALSE_POSITIVE", label: "误报", icon: "👎", activeClass: "bg-red-50 border-red-300 text-red-700 ring-1 ring-red-300" },
+  { type: "NEEDS_REVIEW", label: "待确认", icon: "👀", activeClass: "bg-amber-50 border-amber-300 text-amber-700 ring-1 ring-amber-300" },
+];
 
 const SEVERITY_COLORS: Record<string, { dot: string; badge: string }> = {
   CRITICAL: { dot: "bg-red-500", badge: "bg-red-50 text-red-700 border-red-300" },
@@ -12,9 +18,30 @@ const SEVERITY_COLORS: Record<string, { dot: string; badge: string }> = {
 
 export function IssueCard({ issue, index = 0 }: { issue: Issue; index?: number }) {
   const [showSuggestion, setShowSuggestion] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackType | null>(issue.feedback?.feedback || null);
+  const [submitting, setSubmitting] = useState(false);
   const hasSuggestion = !!issue.suggestion;
   const colors = SEVERITY_COLORS[issue.severity] || SEVERITY_COLORS.LOW;
   const delay = `${index * 0.05}s`;
+
+  const handleFeedback = useCallback(async (type: FeedbackType) => {
+    if (submitting || feedback) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/issue/${issue.id}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback: type }),
+      });
+      if (res.ok) {
+        setFeedback(type);
+      }
+    } catch {
+      // 静默失败，不影响用户体验
+    } finally {
+      setSubmitting(false);
+    }
+  }, [issue.id, feedback, submitting]);
 
   return (
     <div
@@ -43,6 +70,31 @@ export function IssueCard({ issue, index = 0 }: { issue: Issue; index?: number }
           <code>{issue.codeSnippet}</code>
         </pre>
       )}
+
+      {/* Feedback buttons */}
+      <div className="mt-3 flex items-center gap-1.5">
+        <span className="text-[10px] text-muted-foreground/50 mr-0.5">反馈:</span>
+        {FEEDBACK_OPTIONS.map((opt) => {
+          const isActive = feedback === opt.type;
+          const isDisabled = !!feedback || submitting;
+          return (
+            <button
+              key={opt.type}
+              onClick={() => handleFeedback(opt.type)}
+              disabled={isDisabled}
+              className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium transition-all ${
+                isActive
+                  ? opt.activeClass
+                  : "border-transparent bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+              } ${isDisabled ? "cursor-default opacity-60" : "cursor-pointer"}`}
+              title={opt.label}
+            >
+              <span className="text-xs">{opt.icon}</span>
+              <span>{opt.label}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* Suggestion */}
       {hasSuggestion && (

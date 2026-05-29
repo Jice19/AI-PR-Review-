@@ -1,6 +1,26 @@
 import OpenAI from "openai";
+import { prisma } from "@/backend/lib/prisma";
 
 let _client: OpenAI | null = null;
+
+function writeAuditLog(params: {
+  reviewId: string;
+  model: string;
+  stage: string;
+  promptChars: number;
+  responseChars: number;
+  totalTokens?: number;
+  durationMs: number;
+  success: boolean;
+  errorMsg?: string;
+}) {
+  // Fire-and-forget: 不阻塞分析流程，写入失败静默处理
+  prisma.auditLog
+    .create({ data: params })
+    .catch((e: unknown) =>
+      console.error("[AuditLog] 写入失败:", e instanceof Error ? e.message : e)
+    );
+}
 
 function getClient(): OpenAI {
   if (!_client) {
@@ -21,6 +41,10 @@ interface LLMCallOptions {
   temperature?: number;
   thinking?: boolean;
   maxTokens?: number;
+  audit?: {
+    reviewId: string;
+    stage: string;
+  };
 }
 
 
@@ -72,9 +96,10 @@ export async function callLLM<T>(
   messages: { role: "system" | "user"; content: string }[],
   options: LLMCallOptions
 ): Promise<T> {
-  const { model, temperature = 0.1, thinking = false, maxTokens = 8192 } = options;
+  const { model, temperature = 0.1, thinking = false, maxTokens = 8192, audit } = options;
 
   const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  const startTime = Date.now();
   console.log(`[LLM] ${model} 调用, prompt: ${totalChars} chars, max_tokens: ${maxTokens}`);
 
   const controller = new AbortController();
@@ -103,11 +128,42 @@ export async function callLLM<T>(
     const finishReason = response.choices[0]?.finish_reason;
     const content = message?.content;
 
+    const durationMs = Date.now() - startTime;
+    const responseChars = content?.length || 0;
+
     console.log(
       `[LLM] ${model} 完成 (finish: ${finishReason}, tokens: ${response.usage?.total_tokens})`
     );
 
+    // Fire-and-forget 审计日志
+    if (audit) {
+      writeAuditLog({
+        reviewId: audit.reviewId,
+        model,
+        stage: audit.stage,
+        promptChars: totalChars,
+        responseChars,
+        totalTokens: response.usage?.total_tokens,
+        durationMs,
+        success: true,
+      });
+    }
+
     if (!content) {
+      // 即使空响应也记录审计
+      if (audit) {
+        writeAuditLog({
+          reviewId: audit.reviewId,
+          model,
+          stage: audit.stage,
+          promptChars: totalChars,
+          responseChars: 0,
+          totalTokens: response.usage?.total_tokens,
+          durationMs,
+          success: false,
+          errorMsg: `empty response (finish_reason: ${finishReason})`,
+        });
+      }
       const msgRecord = message as unknown as Record<string, unknown> | undefined;
       const reasoningLen = msgRecord?.["reasoning_content"]
         ? String(msgRecord["reasoning_content"]).length
@@ -121,6 +177,23 @@ export async function callLLM<T>(
     return parseLLMResponse<T>(content);
   } catch (error: unknown) {
     clearTimeout(timer);
+    const durationMs = Date.now() - startTime;
+    const errMsg = error instanceof Error ? error.message : String(error);
+
+    // Fire-and-forget 审计日志（失败）
+    if (audit) {
+      writeAuditLog({
+        reviewId: audit.reviewId,
+        model,
+        stage: audit.stage,
+        promptChars: totalChars,
+        responseChars: 0,
+        durationMs,
+        success: false,
+        errorMsg: errMsg,
+      });
+    }
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`LLM 调用超时 (${LLM_TIMEOUT_MS / 1000}s): ${model}`);
     }
@@ -136,9 +209,10 @@ export async function callLLMStream<T>(
   options: LLMCallOptions,
   onToken: (delta: string) => void
 ): Promise<T> {
-  const { model, temperature = 0.1, thinking = false, maxTokens = 8192 } = options;
+  const { model, temperature = 0.1, thinking = false, maxTokens = 8192, audit } = options;
 
   const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  const startTime = Date.now();
   console.log(`[LLM] ${model} 流式调用, prompt: ${totalChars} chars, max_tokens: ${maxTokens}`);
 
   const controller = new AbortController();
@@ -172,15 +246,58 @@ export async function callLLMStream<T>(
     }
 
     clearTimeout(timer);
+    const durationMs = Date.now() - startTime;
     console.log(`[LLM] ${model} 流式完成, 总长度: ${fullContent.length} chars`);
 
+    // Fire-and-forget 审计日志
+    if (audit) {
+      writeAuditLog({
+        reviewId: audit.reviewId,
+        model,
+        stage: audit.stage,
+        promptChars: totalChars,
+        responseChars: fullContent.length,
+        durationMs,
+        success: true,
+      });
+    }
+
     if (!fullContent) {
+      if (audit) {
+        writeAuditLog({
+          reviewId: audit.reviewId,
+          model,
+          stage: audit.stage,
+          promptChars: totalChars,
+          responseChars: 0,
+          durationMs,
+          success: false,
+          errorMsg: "empty stream response",
+        });
+      }
       throw new Error("LLM stream returned empty response. 请增大 max_tokens。");
     }
 
     return parseLLMResponse<T>(fullContent);
   } catch (error: unknown) {
     clearTimeout(timer);
+    const durationMs = Date.now() - startTime;
+    const errMsg = error instanceof Error ? error.message : String(error);
+
+    // Fire-and-forget 审计日志（失败）
+    if (audit) {
+      writeAuditLog({
+        reviewId: audit.reviewId,
+        model,
+        stage: audit.stage,
+        promptChars: totalChars,
+        responseChars: 0,
+        durationMs,
+        success: false,
+        errorMsg: errMsg,
+      });
+    }
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`LLM 调用超时 (${LLM_TIMEOUT_MS / 1000}s): ${model}`);
     }
@@ -193,9 +310,17 @@ export async function callLLMStream<T>(
  */
 export async function callFlash<T>(
   messages: { role: "system" | "user"; content: string }[],
-  maxTokens?: number
+  maxTokensOrOptions?: number | { maxTokens?: number; audit?: { reviewId: string; stage: string } }
 ): Promise<T> {
-  return callLLM<T>(messages, { model: "deepseek-v4-flash", maxTokens });
+  const opts =
+    typeof maxTokensOrOptions === "number"
+      ? { maxTokens: maxTokensOrOptions }
+      : maxTokensOrOptions || {};
+  return callLLM<T>(messages, {
+    model: "deepseek-v4-flash",
+    maxTokens: opts.maxTokens,
+    audit: opts.audit,
+  });
 }
 
 /**

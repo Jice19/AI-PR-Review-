@@ -61,10 +61,11 @@ export async function analyzeSummary(context: ReviewContext): Promise<SummaryOut
 
 export async function analyzeSummaryStream(
   context: ReviewContext,
-  onToken: (delta: string) => void
+  onToken: (delta: string) => void,
+  audit?: { reviewId: string; stage: string }
 ): Promise<SummaryOutput> {
   const messages = buildSummaryMessages(context);
-  return callLLMStream<SummaryOutput>(messages, { model: "deepseek-v4-flash" }, onToken);
+  return callLLMStream<SummaryOutput>(messages, { model: "deepseek-v4-flash", audit }, onToken);
 }
 
 // ========== Stage 2: 风险代码识别 ==========
@@ -155,7 +156,8 @@ const LAYER_PROMPTS: Record<string, string> = {
  */
 export async function analyzeFileRisk(
   file: ReviewContext["files"][0],
-  relatedContext: string
+  relatedContext: string,
+  audit?: { reviewId: string; stage: string }
 ): Promise<Issue[]> {
   const prompt = LAYER_PROMPTS[file.layer] || BACKEND_PROMPT;
 
@@ -164,10 +166,11 @@ export async function analyzeFileRisk(
   const fullContent = file.fullContent.slice(0, maxContentLen);
   const diff = file.diff.slice(0, maxContentLen);
 
-  const result = await callFlash<RiskOutput>([
-    {
-      role: "user",
-      content: `${prompt}
+  const result = await callFlash<RiskOutput>(
+    [
+      {
+        role: "user",
+        content: `${prompt}
 
 ## 文件信息
 - 路径: ${file.path}
@@ -204,8 +207,10 @@ ${relatedContext || "(无关联上下文)"}
     }
   ]
 }`,
-    },
-  ]);
+      },
+    ],
+    { audit }
+  );
 
   return result.issues || [];
 }
@@ -247,13 +252,15 @@ interface SuggestionOutput {
  */
 export async function analyzeSuggestion(
   issue: Issue,
-  context: { codeSnippet: string; fullContent: string }
+  context: { codeSnippet: string; fullContent: string },
+  audit?: { reviewId: string; stage: string }
 ): Promise<Suggestion | null> {
   if (!issue.severity || (issue.severity !== "CRITICAL" && issue.severity !== "HIGH")) {
     return null; // 只对高危问题生成建议
   }
 
-  const result = await callFlash<SuggestionOutput>([
+  const result = await callFlash<SuggestionOutput>(
+    [
     {
       role: "user",
       content: `根据以下代码问题，生成可直接应用的修复建议。
@@ -291,7 +298,9 @@ ${context.fullContent.slice(0, 5000)}
   }
 }`,
     },
-  ]);
+  ],
+    { audit }
+  );
 
   return result.suggestion || null;
 }

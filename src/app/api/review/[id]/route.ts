@@ -55,7 +55,13 @@ export async function GET(
       decision: review.decision,
       decisionReason: review.decisionReason,
       createdAt: review.createdAt,
-      issues: review.issues,
+      issues: review.issues.map((issue) => {
+        const { feedbacks, ...rest } = issue;
+        return {
+          ...rest,
+          feedback: feedbacks[0] || null,
+        };
+      }),
       metadata: review.metadata,
     });
   } catch (error) {

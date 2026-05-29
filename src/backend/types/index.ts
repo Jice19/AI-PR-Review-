@@ -71,6 +71,17 @@ export interface Suggestion {
   performanceImpact?: string;
 }
 
+export type FeedbackType = "USEFUL" | "FALSE_POSITIVE" | "NEEDS_REVIEW";
+
+export interface IssueFeedback {
+  id: string;
+  issueId: string;
+  feedback: FeedbackType;
+  comment?: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface Issue {
   id: string;
   filePath: string;
@@ -86,6 +97,7 @@ export interface Issue {
   confidence: number;
   source: IssueSource;
   ruleId?: string;
+  feedback?: IssueFeedback | null;
 }
 
 // ========== 审查报告类型 ==========

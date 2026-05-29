@@ -9,16 +9,62 @@ datasource db {
 
 // ========== 用户 ==========
 model User {
-  id        String   @id @default(uuid())
-  githubId  String   @unique
-  name      String
-  email     String?
-  avatar    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(uuid())
+  githubId      String?   @unique
+  name          String
+  email         String?
+  emailVerified DateTime?
+  image         String?
+  avatar        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  reviews  Review[]
-  policies ReviewPolicy[]
+  accounts  Account[]
+  sessions  Session[]
+  reviews   Review[]
+  policies  ReviewPolicy[]
+}
+
+// ========== NextAuth 账户关联 ==========
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// ========== NextAuth 会话 ==========
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ========== NextAuth 验证令牌 ==========
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
 }
 
 // ========== 审查记录 ==========
@@ -44,6 +90,7 @@ model Review {
   policy       ReviewPolicy? @relation(fields: [policyId], references: [id])
   stageResults StageResult[]
   issues       ReviewIssue[]
+  auditLogs    AuditLog[]
   contextFiles ContextFile[]
 
   @@index([userId])
@@ -89,24 +136,55 @@ model ReviewIssue {
   review       Review      @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   stageResultId String?
   stageResult  StageResult? @relation(fields: [stageResultId], references: [id], onDelete: SetNull)
-  feedbacks    Feedback[]
+  feedbacks    IssueFeedback[]
 
   @@index([reviewId])
   @@index([severity])
   @@index([layer])
 }
 
-// ========== 用户反馈 ==========
-model Feedback {
-  id         String   @id @default(uuid())
-  isAccurate Boolean
-  comment    String?  @db.Text
-  createdAt  DateTime @default(now())
+// ========== 反馈类型 ==========
+enum FeedbackType {
+  USEFUL
+  FALSE_POSITIVE
+  NEEDS_REVIEW
+}
 
-  issueId String
-  issue   ReviewIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+// ========== Issue 反馈 ==========
+model IssueFeedback {
+  id        String       @id @default(uuid())
+  issueId   String
+  feedback  FeedbackType
+  comment   String?      @db.Text
+  createdBy String
+  createdAt DateTime     @default(now())
 
+  issue ReviewIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([issueId])
   @@index([issueId])
+}
+
+// ========== LLM 审计日志 ==========
+model AuditLog {
+  id            String   @id @default(uuid())
+  reviewId      String
+  model         String
+  stage         String
+  promptChars   Int
+  responseChars Int
+  totalTokens   Int?
+  durationMs    Int
+  fileCount     Int?
+  success       Boolean
+  errorMsg      String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([createdAt])
+  @@index([model])
 }
 
 // ========== 审查策略 ==========

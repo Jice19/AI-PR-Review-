@@ -83,7 +83,7 @@ export async function getReview(reviewId: string) {
   return prisma.review.findUnique({
     where: { id: reviewId },
     include: {
-      issues: true,
+      issues: { include: { feedbacks: true } },
       stageResults: { include: { issues: true } },
     },
   });
@@ -180,9 +180,13 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
     await updateReviewStatus(reviewId, "ANALYZING");
 
     // 2a: 流式总结
-    const summary = await analyzeSummaryStream(context, (delta) => {
-      emitSSE(reviewId, "token", { content: delta });
-    });
+    const summary = await analyzeSummaryStream(
+      context,
+      (delta) => {
+        emitSSE(reviewId, "token", { content: delta });
+      },
+      { reviewId, stage: "summary" }
+    );
     console.log(`[Analysis:${reviewId}] 总结完成`);
 
     // 2b: 文件风险分析（分批并行，每批完成后增量保存）
@@ -196,7 +200,7 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
           const related = (context.relatedFiles[file.path] || [])
             .map((r) => `// ${r.path}\n${r.content.slice(0, 3000)}`)
             .join("\n\n");
-          return analyzeFileRisk(file, related);
+          return analyzeFileRisk(file, related, { reviewId, stage: "file-risk" });
         })
       );
       const batchIssues = batchResults.flat();
@@ -249,10 +253,11 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
         const fullContent =
           context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
         try {
-          issue.suggestion = (await analyzeSuggestion(issue, {
-            codeSnippet: issue.codeSnippet,
-            fullContent,
-          })) as Suggestion | undefined;
+          issue.suggestion = (await analyzeSuggestion(
+            issue,
+            { codeSnippet: issue.codeSnippet, fullContent },
+            { reviewId, stage: "suggestion" }
+          )) as Suggestion | undefined;
 
           if (issue.suggestion) {
             await prisma.reviewIssue.updateMany({
