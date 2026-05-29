@@ -235,30 +235,54 @@ export async function analyzePRInBackground(reviewId: string, prUrl: string) {
     const highCritical = issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH");
     console.log(`[Analysis:${reviewId}] Stage 3: suggestions for ${highCritical.length} high/critical issues`);
     emitSSE(reviewId, "phase", { phase: "SUGGESTING", label: `生成 ${highCritical.length} 条修复建议...` });
+    emitSSE(reviewId, "progress", {
+      analyzed: totalFiles,
+      totalFiles,
+      totalIssues: issues.length,
+      suggestionCurrent: 0,
+      suggestionTotal: highCritical.length,
+    });
+    let suggestionDone = 0;
+    let suggestionErrors = 0;
     for (const issue of issues) {
       if (issue.severity === "CRITICAL" || issue.severity === "HIGH") {
         const fullContent =
           context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
-        issue.suggestion = (await analyzeSuggestion(issue, {
-          codeSnippet: issue.codeSnippet,
-          fullContent,
-        })) as Suggestion | undefined;
+        try {
+          issue.suggestion = (await analyzeSuggestion(issue, {
+            codeSnippet: issue.codeSnippet,
+            fullContent,
+          })) as Suggestion | undefined;
 
-        // 增量更新 suggestion 到 DB
-        if (issue.suggestion) {
-          await prisma.reviewIssue.updateMany({
-            where: {
-              reviewId,
-              filePath: issue.filePath,
-              lineStart: issue.lineStart,
-              title: issue.title,
-            },
-            data: {
-              suggestion: issue.suggestion as unknown as Prisma.InputJsonValue,
-            },
-          });
+          if (issue.suggestion) {
+            await prisma.reviewIssue.updateMany({
+              where: {
+                reviewId,
+                filePath: issue.filePath,
+                lineStart: issue.lineStart,
+                title: issue.title,
+              },
+              data: {
+                suggestion: issue.suggestion as unknown as Prisma.InputJsonValue,
+              },
+            });
+          }
+        } catch (err) {
+          suggestionErrors++;
+          console.error(`[Analysis:${reviewId}] 建议生成失败 (${issue.title}):`, (err as Error).message);
         }
+        suggestionDone++;
+        emitSSE(reviewId, "progress", {
+          analyzed: totalFiles,
+          totalFiles,
+          totalIssues: issues.length,
+          suggestionCurrent: suggestionDone,
+          suggestionTotal: highCritical.length,
+        });
       }
+    }
+    if (suggestionErrors > 0) {
+      console.warn(`[Analysis:${reviewId}] ${suggestionErrors}/${highCritical.length} 条建议生成失败，跳过`);
     }
 
     // 计算评分
@@ -309,8 +333,9 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
     });
     console.log(`[Analysis:${reviewId}] ===== 分析完成 =====`);
   } catch (error) {
-    console.error(`[Analysis:${reviewId}] ===== 分析失败 =====`, error);
-    emitSSE(reviewId, "error", { error: "分析失败" });
-    await updateReviewStatus(reviewId, "FAILED");
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[Analysis:${reviewId}] ===== 分析失败 =====`, msg);
+    emitSSE(reviewId, "error", { error: msg });
+    try { await updateReviewStatus(reviewId, "FAILED"); } catch { /* ignore */ }
   }
 }

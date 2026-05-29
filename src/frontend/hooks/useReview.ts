@@ -47,6 +47,8 @@ interface ProgressData {
   analyzed: number;
   totalFiles: number;
   totalIssues: number;
+  suggestionCurrent?: number;
+  suggestionTotal?: number;
 }
 
 interface CompleteData {
@@ -60,6 +62,7 @@ export function useReviewStream(reviewId: string | undefined) {
   const [streamPhase, setStreamPhase] = useState("");
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [complete, setComplete] = useState<CompleteData | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
   const completeRef = useRef(false);
 
   useEffect(() => {
@@ -76,6 +79,7 @@ export function useReviewStream(reviewId: string | undefined) {
         const decoder = new TextDecoder();
         let buffer = "";
 
+        let currentEvent = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -84,7 +88,6 @@ export function useReviewStream(reviewId: string | undefined) {
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
 
-          let currentEvent = "";
           for (const line of lines) {
             if (line.startsWith("event: ")) {
               currentEvent = line.slice(7).trim();
@@ -107,6 +110,7 @@ export function useReviewStream(reviewId: string | undefined) {
                     completeRef.current = true;
                     break;
                   case "error":
+                    setErrorMsg(parsed.error || "分析失败");
                     completeRef.current = true;
                     break;
                 }
@@ -124,5 +128,5 @@ export function useReviewStream(reviewId: string | undefined) {
     return () => controller.abort();
   }, [reviewId]);
 
-  return { streamText, streamPhase, progress, complete };
+  return { streamText, streamPhase, progress, complete, errorMsg };
 }

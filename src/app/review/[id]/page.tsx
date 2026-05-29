@@ -8,7 +8,7 @@ export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { review, error } = useReview(id);
-  const { streamText, streamPhase, progress } = useReviewStream(id);
+  const { streamText, progress, errorMsg } = useReviewStream(id);
 
   if (error) {
     return (
@@ -25,8 +25,8 @@ export default function ReviewPage() {
       review={review}
       onBack={() => router.push("/")}
       streamText={streamText}
-      streamPhase={streamPhase}
       progress={progress}
+      errorMsg={errorMsg}
     />
   );
 }
