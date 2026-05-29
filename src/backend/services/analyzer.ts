@@ -1,4 +1,4 @@
-import { callFlash, callPro } from "@/backend/lib/llm";
+import { callFlash, callLLMStream } from "@/backend/lib/llm";
 
 // 文件风险分析使用 Flash（快），建议生成使用 Pro（深）
 import type { ReviewContext, Issue, Suggestion } from "@/backend/types";
@@ -11,7 +11,7 @@ interface SummaryOutput {
   focusAreas: string[];
 }
 
-export async function analyzeSummary(context: ReviewContext): Promise<SummaryOutput> {
+function buildSummaryMessages(context: ReviewContext) {
   const commits = context.commits
     .slice(0, 10)
     .map((c) => `- ${c.message.split("\n")[0]}`)
@@ -21,9 +21,9 @@ export async function analyzeSummary(context: ReviewContext): Promise<SummaryOut
     .map((f) => `- ${f.path} (${f.layer}, +${f.additions}/-${f.deletions})`)
     .join("\n");
 
-  const result = await callFlash<SummaryOutput>([
+  return [
     {
-      role: "user",
+      role: "user" as const,
       content: `你是代码审查专家。根据以下信息生成简洁的PR变更总结。
 
 ## PR 信息
@@ -51,9 +51,20 @@ ${fileList}
   "focusAreas": ["关注重点1", "关注重点2", "关注重点3"]
 }`,
     },
-  ]);
+  ];
+}
 
-  return result;
+export async function analyzeSummary(context: ReviewContext): Promise<SummaryOutput> {
+  const messages = buildSummaryMessages(context);
+  return callFlash<SummaryOutput>(messages);
+}
+
+export async function analyzeSummaryStream(
+  context: ReviewContext,
+  onToken: (delta: string) => void
+): Promise<SummaryOutput> {
+  const messages = buildSummaryMessages(context);
+  return callLLMStream<SummaryOutput>(messages, { model: "deepseek-v4-flash" }, onToken);
 }
 
 // ========== Stage 2: 风险代码识别 ==========

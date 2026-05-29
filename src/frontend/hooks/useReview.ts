@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { ReviewReport } from "@/backend/types";
 
@@ -41,4 +41,88 @@ export function useReview(reviewId: string | undefined) {
   }, [reviewId, fetchReview]);
 
   return { review, error, polling };
+}
+
+interface ProgressData {
+  analyzed: number;
+  totalFiles: number;
+  totalIssues: number;
+}
+
+interface CompleteData {
+  overallScore: number;
+  decision: string;
+  totalIssues: number;
+}
+
+export function useReviewStream(reviewId: string | undefined) {
+  const [streamText, setStreamText] = useState("");
+  const [streamPhase, setStreamPhase] = useState("");
+  const [progress, setProgress] = useState<ProgressData | null>(null);
+  const [complete, setComplete] = useState<CompleteData | null>(null);
+  const completeRef = useRef(false);
+
+  useEffect(() => {
+    if (!reviewId) return;
+    if (completeRef.current) return;
+
+    const controller = new AbortController();
+
+    fetch(`/api/review/${reviewId}/stream`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok || !res.body) return;
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          let currentEvent = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              const data = line.slice(6);
+              try {
+                const parsed = JSON.parse(data);
+                switch (currentEvent) {
+                  case "phase":
+                    setStreamPhase(parsed.label || parsed.phase);
+                    break;
+                  case "token":
+                    setStreamText((prev) => prev + parsed.content);
+                    break;
+                  case "progress":
+                    setProgress(parsed);
+                    break;
+                  case "complete":
+                    setComplete(parsed);
+                    completeRef.current = true;
+                    break;
+                  case "error":
+                    completeRef.current = true;
+                    break;
+                }
+              } catch {
+                // ignore parse errors for partial chunks
+              }
+            }
+          }
+        }
+      })
+      .catch(() => {
+        // SSE connection failed - silently degrade to polling-only
+      });
+
+    return () => controller.abort();
+  }, [reviewId]);
+
+  return { streamText, streamPhase, progress, complete };
 }

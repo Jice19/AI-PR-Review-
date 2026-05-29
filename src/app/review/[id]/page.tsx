@@ -1,13 +1,14 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useReview } from "@/frontend/hooks";
+import { useReview, useReviewStream } from "@/frontend/hooks";
 import { ReviewReport, LoadingSpinner } from "@/frontend/components";
 
 export default function ReviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { review, error } = useReview(id);
+  const { streamText, streamPhase, progress } = useReviewStream(id);
 
   if (error) {
     return (
@@ -19,5 +20,13 @@ export default function ReviewPage() {
 
   if (!review) return <LoadingSpinner text="加载中..." />;
 
-  return <ReviewReport review={review} onBack={() => router.push("/")} />;
+  return (
+    <ReviewReport
+      review={review}
+      onBack={() => router.push("/")}
+      streamText={streamText}
+      streamPhase={streamPhase}
+      progress={progress}
+    />
+  );
 }
