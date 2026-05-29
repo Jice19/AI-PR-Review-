@@ -1,4 +1,6 @@
 import { callFlash, callPro } from "@/backend/lib/llm";
+
+// 文件风险分析使用 Flash（快），建议生成使用 Pro（深）
 import type { ReviewContext, Issue, Suggestion } from "@/backend/types";
 
 // ========== Stage 1: PR 变更总结 ==========
@@ -146,12 +148,12 @@ export async function analyzeFileRisk(
 ): Promise<Issue[]> {
   const prompt = LAYER_PROMPTS[file.layer] || BACKEND_PROMPT;
 
-  // 截断过长内容（Pro 模式 128K 上下文，留足够空间给推理）
+  // 截断过长内容
   const maxContentLen = 8000;
   const fullContent = file.fullContent.slice(0, maxContentLen);
   const diff = file.diff.slice(0, maxContentLen);
 
-  const result = await callPro<RiskOutput>([
+  const result = await callFlash<RiskOutput>([
     {
       role: "user",
       content: `${prompt}
@@ -203,7 +205,7 @@ ${relatedContext || "(无关联上下文)"}
 export async function analyzeFiles(
   files: ReviewContext["files"],
   relatedFiles: ReviewContext["relatedFiles"],
-  batchSize = 5
+  batchSize = 10
 ): Promise<Issue[]> {
   const allIssues: Issue[] = [];
 
@@ -286,13 +288,15 @@ ${context.fullContent.slice(0, 5000)}
 // ========== 入口：完整分析流水线 ==========
 
 export async function runFullAnalysis(context: ReviewContext) {
-  // Stage 1: 总结
+  console.log(`[Analysis] Stage 1/3: summarize (${context.files.length} files)`);
   const summary = await analyzeSummary(context);
+  console.log(`[Analysis] Stage 1/3 完成`);
 
-  // Stage 2: 逐文件风险分析
+  console.log(`[Analysis] Stage 2/3: file risks (${context.files.length} files)`);
   const issues = await analyzeFiles(context.files, context.relatedFiles);
+  console.log(`[Analysis] Stage 2/3 完成: ${issues.length} issues`);
 
-  // Stage 3: 对 CRITICAL/HIGH 问题生成建议
+  console.log(`[Analysis] Stage 3/3: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
   for (const issue of issues) {
     if (issue.severity === "CRITICAL" || issue.severity === "HIGH") {
       const fullContent =
@@ -338,6 +342,8 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
 ---
 
 **文件变更**: ${context.files.length} 个 | **发现问题**: ${issues.length} 个`;
+
+  console.log(`[Analysis] Stage 3/3 完成. score: ${score}, decision: ${decision}`);
 
   return {
     summary: summaryText,

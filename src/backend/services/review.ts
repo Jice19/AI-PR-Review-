@@ -103,3 +103,61 @@ export async function saveIssues(
     })),
   });
 }
+
+/** 清除 Review 的所有问题 */
+export async function clearIssues(reviewId: string) {
+  return prisma.reviewIssue.deleteMany({
+    where: { reviewId },
+  });
+}
+
+/** 后台异步执行 AI 分析（不阻塞调用方，异常自行处理） */
+export async function analyzePRInBackground(reviewId: string, prUrl: string) {
+  console.log(`[Analysis:${reviewId}] ===== 后台分析开始 =====`);
+
+  // 延迟导入避免循环依赖
+  const { GitHubService } = await import("@/backend/lib/github");
+  const { ContextBuilder } = await import("@/backend/services/context");
+  const { runFullAnalysis } = await import("@/backend/services/analyzer");
+
+  try {
+    console.log(`[Analysis:${reviewId}] Step 1: 获取代码上下文...`);
+    await updateReviewStatus(reviewId, "FETCHING");
+    const github = new GitHubService();
+    const contextBuilder = new ContextBuilder(github);
+    const context = await contextBuilder.build(prUrl);
+    console.log(`[Analysis:${reviewId}] Step 1 完成: ${context.files.length} 个文件, commits: ${context.commits.length}`);
+
+    console.log(`[Analysis:${reviewId}] Step 2: AI 分析中...`);
+    await updateReviewStatus(reviewId, "ANALYZING");
+    const result = await runFullAnalysis(context);
+    console.log(`[Analysis:${reviewId}] Step 2 完成: ${result.issues.length} 个问题, score: ${result.overallScore}`);
+
+    console.log(`[Analysis:${reviewId}] Step 3: 保存结果...`);
+    await saveIssues(reviewId, result.issues.map((issue) => ({
+      filePath: issue.filePath,
+      lineStart: issue.lineStart,
+      lineEnd: issue.lineEnd,
+      layer: issue.layer,
+      severity: issue.severity,
+      category: issue.category,
+      title: issue.title,
+      description: issue.description,
+      codeSnippet: issue.codeSnippet,
+      confidence: issue.confidence,
+      source: issue.source,
+    })));
+
+    console.log(`[Analysis:${reviewId}] Step 4: 标记完成...`);
+    await updateReviewStatus(reviewId, "COMPLETED", {
+      summary: result.summary,
+      overallScore: result.overallScore,
+      decision: result.decision as "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
+      decisionReason: result.decisionReason,
+    });
+    console.log(`[Analysis:${reviewId}] ===== 分析完成 =====`);
+  } catch (error) {
+    console.error(`[Analysis:${reviewId}] ===== 分析失败 =====`, error);
+    await updateReviewStatus(reviewId, "FAILED");
+  }
+}

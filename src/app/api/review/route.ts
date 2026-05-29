@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parsePRUrl, GitHubService } from "@/backend/lib/github";
 import { requireAuth } from "@/backend/lib/session";
-import { createReview, updateReviewStatus, saveIssues } from "@/backend/services/review";
-import { ContextBuilder } from "@/backend/services/context";
-import { runFullAnalysis } from "@/backend/services/analyzer";
+import { createReview, analyzePRInBackground } from "@/backend/services/review";
 
 export async function POST(request: NextRequest) {
   try {
@@ -58,46 +56,5 @@ export async function POST(request: NextRequest) {
     }
     console.error("创建 Review 失败:", error);
     return NextResponse.json({ error: "分析请求失败" }, { status: 500 });
-  }
-}
-
-/** 后台异步执行 AI 分析 */
-async function analyzePRInBackground(reviewId: string, prUrl: string) {
-  try {
-    // 1. 获取代码上下文
-    await updateReviewStatus(reviewId, "FETCHING");
-    const github = new GitHubService();
-    const contextBuilder = new ContextBuilder(github);
-    const context = await contextBuilder.build(prUrl);
-
-    // 2. AI 分析
-    await updateReviewStatus(reviewId, "ANALYZING");
-    const result = await runFullAnalysis(context);
-
-    // 3. 保存问题
-    await saveIssues(reviewId, result.issues.map((issue) => ({
-      filePath: issue.filePath,
-      lineStart: issue.lineStart,
-      lineEnd: issue.lineEnd,
-      layer: issue.layer,
-      severity: issue.severity,
-      category: issue.category,
-      title: issue.title,
-      description: issue.description,
-      codeSnippet: issue.codeSnippet,
-      confidence: issue.confidence,
-      source: issue.source,
-    })));
-
-    // 4. 完成
-    await updateReviewStatus(reviewId, "COMPLETED", {
-      summary: result.summary,
-      overallScore: result.overallScore,
-      decision: result.decision as "APPROVE" | "COMMENT" | "REQUEST_CHANGES",
-      decisionReason: result.decisionReason,
-    });
-  } catch (error) {
-    console.error(`Review ${reviewId} 分析失败:`, error);
-    await updateReviewStatus(reviewId, "FAILED");
   }
 }
