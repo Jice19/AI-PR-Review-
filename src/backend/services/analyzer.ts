@@ -23,6 +23,25 @@ function buildSummaryMessages(context: ReviewContext) {
     .map((f) => `- ${f.path} (${f.layer}, +${f.additions}/-${f.deletions})`)
     .join("\n");
 
+  // 构建项目技术栈描述
+  let projectInfo = "";
+  const pkg = context.projectConfig?.packageJson;
+  const tsconfig = context.projectConfig?.tsconfig;
+  if (pkg && Object.keys(pkg).length > 0) {
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const framework = Object.keys(deps).filter((d) =>
+      ["next", "react", "vue", "express", "fastify", "prisma", "tailwindcss"].includes(d)
+    );
+    projectInfo += `\n## 项目技术栈\n- 框架: ${framework.join(", ") || "未知"}`;
+    if (tsconfig && (tsconfig as Record<string, unknown>)["compilerOptions"]) {
+      const opts = (tsconfig as Record<string, unknown>)["compilerOptions"] as Record<string, unknown>;
+      if (opts["strict"]) projectInfo += `\n- TypeScript strict: true`;
+      if (opts["paths"]) {
+        projectInfo += `\n- 路径别名: ${Object.keys(opts["paths"] as Record<string, unknown>).join(", ")}`;
+      }
+    }
+  }
+
   return [
     {
       role: "user" as const,
@@ -33,6 +52,7 @@ function buildSummaryMessages(context: ReviewContext) {
 - 描述: ${context.prDescription || "无"}
 - 分支: ${context.branchFrom} → ${context.branchTo}
 - 文件变更: ${context.files.length} 个文件
+${projectInfo}
 
 ## Commit 历史
 ${commits || "无"}

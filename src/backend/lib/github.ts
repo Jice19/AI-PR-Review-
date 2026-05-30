@@ -158,6 +158,29 @@ export class GitHubService {
     }
   }
 
+  /** 获取项目配置文件 (package.json / tsconfig.json) */
+  async getProjectConfig(owner: string, repo: string, ref: string): Promise<{
+    packageJson: Record<string, unknown>;
+    tsconfig: Record<string, unknown>;
+  }> {
+    const [pkgRaw, tsconfigRaw] = await Promise.all([
+      this.getFileContent(owner, repo, "package.json", ref),
+      this.getFileContent(owner, repo, "tsconfig.json", ref),
+    ]);
+
+    let packageJson: Record<string, unknown> = {};
+    let tsconfig: Record<string, unknown> = {};
+
+    if (pkgRaw) {
+      try { packageJson = JSON.parse(pkgRaw); } catch { /* ignore parse errors */ }
+    }
+    if (tsconfigRaw) {
+      try { tsconfig = JSON.parse(tsconfigRaw); } catch { /* ignore parse errors */ }
+    }
+
+    return { packageJson, tsconfig };
+  }
+
   /** 向 PR 发布评论 */
   async postPRComment(
     owner: string,
@@ -217,10 +240,7 @@ export class GitHubService {
       commits,
       files: fileContexts,
       relatedFiles: {}, // 由 ContextBuilder 填充
-      projectConfig: {
-        tsconfig: {},
-        packageJson: {},
-      },
+      projectConfig: await this.getProjectConfig(owner, repo, meta.branchTo),
     };
   }
 }
