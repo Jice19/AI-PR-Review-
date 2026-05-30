@@ -84,29 +84,42 @@ DEEPSEEK_API_KEY="your_api_key"
 ```
 ├── docs/                     # 项目文档
 │   ├── PROJECT_DESIGN.md     # 完整设计方案
-│   └── TASK_BREAKDOWN.md     # 任务拆分
+│   ├── TASK_BREAKDOWN.md     # 任务拆分
+│   └── DESIGN_RATIONALE.md   # 设计思路说明
 ├── openspec/                 # OpenSpec 规范驱动开发
 │   ├── specs/                # 系统规范
 │   └── changes/              # 变更提案
+├── scripts/
+│   └── ci-review.ts          # GitHub Actions CI 入口
+├── .github/workflows/
+│   └── ai-pr-review.yml      # AI PR Review workflow
 ├── prisma/
 │   └── schema.prisma         # 数据库模型
 ├── src/
 │   ├── app/                  # Next.js App Router
 │   │   ├── page.tsx          # 首页
+│   │   ├── login/page.tsx    # 登录页
 │   │   ├── review/[id]/      # 分析报告页
-│   │   ├── history/          # 历史记录
 │   │   └── api/              # API Routes
-│   ├── components/           # React 组件
-│   ├── lib/                  # 工具函数
-│   │   ├── github.ts         # GitHub API 封装
-│   │   ├── llm.ts            # DeepSeek 客户端
-│   │   ├── context.ts        # 上下文构建器
-│   │   ├── rules.ts          # 规则引擎
-│   │   └── prisma.ts         # Prisma Client 单例
-│   └── services/             # 业务逻辑
-│       ├── review.ts         # Review 编排
-│       ├── analyzer.ts       # AI 分析流水线
-│       └── cache.ts          # 缓存服务
+│   │       ├── webhook/      # GitHub Webhook 接收
+│   │       └── review/       # Review CRUD + 导出入口
+│   ├── frontend/
+│   │   ├── components/       # React 组件
+│   │   └── hooks/            # 自定义 hooks
+│   └── backend/
+│       ├── lib/              # 工具函数
+│       │   ├── github.ts     # GitHub API 封装
+│       │   ├── llm.ts        # DeepSeek 客户端 (Flash/Pro/Stream)
+│       │   ├── embedding.ts  # 百炼 Embedding 服务
+│       │   ├── prisma.ts     # Prisma Client 单例
+│       │   ├── env.ts        # 环境变量校验 (zod)
+│       │   └── utils.ts      # 通用工具 (cn)
+│       ├── services/         # 业务逻辑
+│       │   ├── review.ts     # Review 编排 + SSE 推送
+│       │   ├── analyzer.ts   # AI 分析流水线 (Summary → Risk → Suggest)
+│       │   ├── context.ts    # 上下文构建器 (import 解析 + 关联文件)
+│       │   └── feedback-learner.ts  # RAG 反馈学习 (pgvector)
+│       └── types/            # TypeScript 类型定义
 ├── docker-compose.yml        # 开发环境
 ├── Dockerfile                # 生产构建
 └── .env.example              # 环境变量模板

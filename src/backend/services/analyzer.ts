@@ -23,6 +23,25 @@ function buildSummaryMessages(context: ReviewContext) {
     .map((f) => `- ${f.path} (${f.layer}, +${f.additions}/-${f.deletions})`)
     .join("\n");
 
+  // 构建项目技术栈描述
+  let projectInfo = "";
+  const pkg = context.projectConfig?.packageJson;
+  const tsconfig = context.projectConfig?.tsconfig;
+  if (pkg && Object.keys(pkg).length > 0) {
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const framework = Object.keys(deps).filter((d) =>
+      ["next", "react", "vue", "express", "fastify", "prisma", "tailwindcss"].includes(d)
+    );
+    projectInfo += `\n## 项目技术栈\n- 框架: ${framework.join(", ") || "未知"}`;
+    if (tsconfig && (tsconfig as Record<string, unknown>)["compilerOptions"]) {
+      const opts = (tsconfig as Record<string, unknown>)["compilerOptions"] as Record<string, unknown>;
+      if (opts["strict"]) projectInfo += `\n- TypeScript strict: true`;
+      if (opts["paths"]) {
+        projectInfo += `\n- 路径别名: ${Object.keys(opts["paths"] as Record<string, unknown>).join(", ")}`;
+      }
+    }
+  }
+
   return [
     {
       role: "user" as const,
@@ -33,6 +52,7 @@ function buildSummaryMessages(context: ReviewContext) {
 - 描述: ${context.prDescription || "无"}
 - 分支: ${context.branchFrom} → ${context.branchTo}
 - 文件变更: ${context.files.length} 个文件
+${projectInfo}
 
 ## Commit 历史
 ${commits || "无"}
@@ -314,34 +334,83 @@ ${context.fullContent.slice(0, 5000)}
   return result.suggestion || null;
 }
 
+// ========== 评分函数 ==========
+
+const SEVERITY_WEIGHTS: Record<string, number> = {
+  CRITICAL: 25,
+  HIGH: 10,
+  MEDIUM: 3,
+  LOW: 1,
+};
+
+/**
+ * 计算 PR 综合评分
+ *
+ * 考虑因素：
+ * 1. Issue 严重程度 + 置信度加权
+ * 2. PR 规模归一化（变更行数越大，同等问题扣分越轻）
+ */
+export function calculateScore(
+  issues: { severity: string; confidence: number }[],
+  opts: { totalAdditions?: number; totalDeletions?: number }
+): number {
+  const totalChanges = (opts.totalAdditions ?? 0) + (opts.totalDeletions ?? 0);
+
+  // PR 规模因子：小 PR (≤100行) 因子 1.5，大 PR (≥2000行) 因子 0.5
+  const scaleFactor = totalChanges > 0
+    ? Math.max(0.5, Math.min(1.5, 500 / Math.max(totalChanges, 1)))
+    : 1.0;
+
+  let penalty = 0;
+  for (const issue of issues) {
+    const w = SEVERITY_WEIGHTS[issue.severity] || 0;
+    const confidenceFactor = Math.max(0.3, issue.confidence || 0.5);
+    penalty += w * confidenceFactor;
+  }
+
+  return Math.max(0, Math.round(100 - penalty * scaleFactor));
+}
+
 // ========== 入口：完整分析流水线 ==========
 
 export async function runFullAnalysis(context: ReviewContext) {
-  console.log(`[Analysis] Stage 1/3: summarize (${context.files.length} files)`);
-  const summary = await analyzeSummary(context);
-  console.log(`[Analysis] Stage 1/3 完成`);
+  const totalFiles = context.files.length;
 
-  console.log(`[Analysis] Stage 2/3: file risks (${context.files.length} files)`);
-  const issues = await analyzeFiles(context.files, context.relatedFiles);
-  console.log(`[Analysis] Stage 2/3 完成: ${issues.length} issues`);
+  // Stage 1+2 并行：Summary 和 File Risk 互不依赖
+  console.log(`[Analysis] Stage 1+2 并行: summarize + file risks (${totalFiles} files)`);
+  const [summary, issues] = await Promise.all([
+    analyzeSummary(context),
+    analyzeFiles(context.files, context.relatedFiles),
+  ]);
+  console.log(`[Analysis] Stage 1+2 完成: ${issues.length} issues`);
 
-  console.log(`[Analysis] Stage 3/3: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
-  for (const issue of issues) {
-    if (issue.severity === "CRITICAL" || issue.severity === "HIGH") {
-      const fullContent =
-        context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
-      issue.suggestion = (await analyzeSuggestion(issue, {
-        codeSnippet: issue.codeSnippet,
-        fullContent,
-      })) as Suggestion | undefined;
-    }
+  console.log(`[Analysis] Stage 2/2: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
+  // 批量并行生成建议（每批 5 条）
+  const highPriorityIssues = issues.filter(
+    i => i.severity === "CRITICAL" || i.severity === "HIGH"
+  );
+  const suggestionBatchSize = 5;
+  for (let i = 0; i < highPriorityIssues.length; i += suggestionBatchSize) {
+    const batch = highPriorityIssues.slice(i, i + suggestionBatchSize);
+    await Promise.all(
+      batch.map(async (issue) => {
+        const fullContent =
+          context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
+        issue.suggestion = (await analyzeSuggestion(issue, {
+          codeSnippet: issue.codeSnippet,
+          fullContent,
+        })) as Suggestion | undefined;
+      })
+    );
   }
 
-  // 计算综合评分
+  // 计算综合评分（含 PR 规模归一化 + 置信度加权）
+  const totalAdditions = context.files.reduce((sum, f) => sum + f.additions, 0);
+  const totalDeletions = context.files.reduce((sum, f) => sum + f.deletions, 0);
   const critical = issues.filter((i) => i.severity === "CRITICAL").length;
   const high = issues.filter((i) => i.severity === "HIGH").length;
   const medium = issues.filter((i) => i.severity === "MEDIUM").length;
-  const score = Math.max(0, 100 - critical * 25 - high * 10 - medium * 3);
+  const score = calculateScore(issues, { totalAdditions, totalDeletions });
 
   let decision: string;
   let decisionReason: string;
@@ -372,7 +441,7 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
 
 **文件变更**: ${context.files.length} 个 | **发现问题**: ${issues.length} 个`;
 
-  console.log(`[Analysis] Stage 3/3 完成. score: ${score}, decision: ${decision}`);
+  console.log(`[Analysis] Stage 2/2 完成. score: ${score}, decision: ${decision}`);
 
   return {
     summary: summaryText,
