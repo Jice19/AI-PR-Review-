@@ -11,6 +11,20 @@
 - **流式分析体验**：SSE 实时推送分析进度，结果逐文件浮现，首屏可见 ≤ 2s
 - **反馈闭环**：用户标记误报/有用，数据回流持续优化分析准确性
 
+## 效果展示
+
+### 首页
+![首页](public/homePage.png)
+
+### AI 分析报告
+![分析结果-1](public/resPicture-1.png)
+![分析结果-2](public/resPicture-2.png)
+
+### GitHub Actions 自动 Review
+![GitHub Actions 运行中](public/githubActionRes-1.png)
+![GitHub Actions 执行成功](public/githubActionSuccess.png)
+![PR 评论](public/githubActionRes-2.png)
+
 ## 技术栈
 
 | 层 | 技术 |
