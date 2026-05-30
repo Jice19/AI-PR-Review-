@@ -162,7 +162,7 @@ export async function analyzePRInBackground(
   // 延迟导入避免循环依赖
   const { GitHubService } = await import("@/backend/lib/github");
   const { ContextBuilder } = await import("@/backend/services/context");
-  const { analyzeSummaryStream, analyzeFileRisk, analyzeSuggestion } = await import("@/backend/services/analyzer");
+  const { analyzeSummaryStream, analyzeFileRisk, analyzeSuggestion, calculateScore } = await import("@/backend/services/analyzer");
 
   try {
     // 清空旧数据（增量保存需要干净起点）
@@ -301,11 +301,13 @@ export async function analyzePRInBackground(
       console.warn(`[Analysis:${reviewId}] ${suggestionErrors}/${highCritical.length} 条建议生成失败，跳过`);
     }
 
-    // 计算评分
+    // 计算评分（含 PR 规模归一化 + 置信度加权）
+    const totalAdditions = context.files.reduce((sum, f) => sum + f.additions, 0);
+    const totalDeletions = context.files.reduce((sum, f) => sum + f.deletions, 0);
     const critical = issues.filter((i) => i.severity === "CRITICAL").length;
     const high = issues.filter((i) => i.severity === "HIGH").length;
     const medium = issues.filter((i) => i.severity === "MEDIUM").length;
-    const score = Math.max(0, 100 - critical * 25 - high * 10 - medium * 3);
+    const score = calculateScore(issues, { totalAdditions, totalDeletions });
 
     let decision: string;
     let decisionReason: string;

@@ -334,6 +334,43 @@ ${context.fullContent.slice(0, 5000)}
   return result.suggestion || null;
 }
 
+// ========== 评分函数 ==========
+
+const SEVERITY_WEIGHTS: Record<string, number> = {
+  CRITICAL: 25,
+  HIGH: 10,
+  MEDIUM: 3,
+  LOW: 1,
+};
+
+/**
+ * 计算 PR 综合评分
+ *
+ * 考虑因素：
+ * 1. Issue 严重程度 + 置信度加权
+ * 2. PR 规模归一化（变更行数越大，同等问题扣分越轻）
+ */
+export function calculateScore(
+  issues: { severity: string; confidence: number }[],
+  opts: { totalAdditions?: number; totalDeletions?: number }
+): number {
+  const totalChanges = (opts.totalAdditions ?? 0) + (opts.totalDeletions ?? 0);
+
+  // PR 规模因子：小 PR (≤100行) 因子 1.5，大 PR (≥2000行) 因子 0.5
+  const scaleFactor = totalChanges > 0
+    ? Math.max(0.5, Math.min(1.5, 500 / Math.max(totalChanges, 1)))
+    : 1.0;
+
+  let penalty = 0;
+  for (const issue of issues) {
+    const w = SEVERITY_WEIGHTS[issue.severity] || 0;
+    const confidenceFactor = Math.max(0.3, issue.confidence || 0.5);
+    penalty += w * confidenceFactor;
+  }
+
+  return Math.max(0, Math.round(100 - penalty * scaleFactor));
+}
+
 // ========== 入口：完整分析流水线 ==========
 
 export async function runFullAnalysis(context: ReviewContext) {
@@ -367,11 +404,13 @@ export async function runFullAnalysis(context: ReviewContext) {
     );
   }
 
-  // 计算综合评分
+  // 计算综合评分（含 PR 规模归一化 + 置信度加权）
+  const totalAdditions = context.files.reduce((sum, f) => sum + f.additions, 0);
+  const totalDeletions = context.files.reduce((sum, f) => sum + f.deletions, 0);
   const critical = issues.filter((i) => i.severity === "CRITICAL").length;
   const high = issues.filter((i) => i.severity === "HIGH").length;
   const medium = issues.filter((i) => i.severity === "MEDIUM").length;
-  const score = Math.max(0, 100 - critical * 25 - high * 10 - medium * 3);
+  const score = calculateScore(issues, { totalAdditions, totalDeletions });
 
   let decision: string;
   let decisionReason: string;
