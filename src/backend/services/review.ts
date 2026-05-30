@@ -185,6 +185,24 @@ export async function analyzePRInBackground(
     const hasRag = ragResults.length > 0;
     console.log(`[Analysis:${reviewId}] RAG 预热完成: ${ragResults.length} 条历史反馈命中`);
 
+    // Stage 1.6: 加载审查策略（ReviewPolicy）
+    const { filterFilesByPolicy, filterIssuesByPolicy, getSeverityWeights } =
+      await import("@/backend/lib/review-policy");
+    const reviewRecord = await prisma.review.findUnique({
+      where: { id: reviewId },
+      select: { policy: { select: { config: true } } },
+    });
+    const policyConfig = reviewRecord?.policy?.config as
+      | import("@/backend/types").ReviewPolicyConfig
+      | undefined;
+    if (policyConfig) {
+      console.log(`[Analysis:${reviewId}] 已加载审查策略, minConfidence: ${policyConfig.minConfidence}, ignorePatterns: ${policyConfig.ignorePatterns?.length ?? 0}`);
+      // 按策略过滤文件
+      const beforeCount = context.files.length;
+      context.files = filterFilesByPolicy(context.files, policyConfig);
+      console.log(`[Analysis:${reviewId}] 策略过滤: ${beforeCount} → ${context.files.length} 个文件`);
+    }
+
     // Stage 2: 流式总结 + 文件风险分析（增量保存）
     console.log(`[Analysis:${reviewId}] Stage 2: AI 分析中...`);
     emitSSE(reviewId, "phase", { phase: "ANALYZING", label: "AI 分析中..." });
@@ -301,13 +319,20 @@ export async function analyzePRInBackground(
       console.warn(`[Analysis:${reviewId}] ${suggestionErrors}/${highCritical.length} 条建议生成失败，跳过`);
     }
 
-    // 计算评分（含 PR 规模归一化 + 置信度加权）
+    // 按策略过滤低置信度问题
+    const filteredIssues = filterIssuesByPolicy(issues, policyConfig);
+    if (filteredIssues.length < issues.length) {
+      console.log(`[Analysis:${reviewId}] 策略过滤: ${issues.length} → ${filteredIssues.length} 个问题`);
+    }
+
+    // 计算评分（含 PR 规模归一化 + 置信度加权 + 策略自定义权重）
     const totalAdditions = context.files.reduce((sum, f) => sum + f.additions, 0);
     const totalDeletions = context.files.reduce((sum, f) => sum + f.deletions, 0);
-    const critical = issues.filter((i) => i.severity === "CRITICAL").length;
-    const high = issues.filter((i) => i.severity === "HIGH").length;
-    const medium = issues.filter((i) => i.severity === "MEDIUM").length;
-    const score = calculateScore(issues, { totalAdditions, totalDeletions });
+    const critical = filteredIssues.filter((i) => i.severity === "CRITICAL").length;
+    const high = filteredIssues.filter((i) => i.severity === "HIGH").length;
+    const medium = filteredIssues.filter((i) => i.severity === "MEDIUM").length;
+    const severityWeights = getSeverityWeights(policyConfig);
+    const score = calculateScore(filteredIssues, { totalAdditions, totalDeletions, severityWeights });
 
     let decision: string;
     let decisionReason: string;
@@ -334,13 +359,13 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
 
 ---
 
-**文件变更**: ${context.files.length} 个 | **发现问题**: ${issues.length} 个`;
+**文件变更**: ${context.files.length} 个 | **发现问题**: ${filteredIssues.length} 个`;
 
     // 发送完成事件
     emitSSE(reviewId, "complete", {
       overallScore: score,
       decision,
-      totalIssues: issues.length,
+      totalIssues: filteredIssues.length,
     });
 
     await updateReviewStatus(reviewId, "COMPLETED", {

@@ -336,7 +336,7 @@ ${context.fullContent.slice(0, 5000)}
 
 // ========== 评分函数 ==========
 
-const SEVERITY_WEIGHTS: Record<string, number> = {
+const DEFAULT_SEVERITY_WEIGHTS: Record<string, number> = {
   CRITICAL: 25,
   HIGH: 10,
   MEDIUM: 3,
@@ -347,13 +347,18 @@ const SEVERITY_WEIGHTS: Record<string, number> = {
  * 计算 PR 综合评分
  *
  * 考虑因素：
- * 1. Issue 严重程度 + 置信度加权
+ * 1. Issue 严重程度 + 置信度加权（支持自定义权重）
  * 2. PR 规模归一化（变更行数越大，同等问题扣分越轻）
  */
 export function calculateScore(
   issues: { severity: string; confidence: number }[],
-  opts: { totalAdditions?: number; totalDeletions?: number }
+  opts: {
+    totalAdditions?: number;
+    totalDeletions?: number;
+    severityWeights?: Record<string, number>;
+  }
 ): number {
+  const weights = opts.severityWeights || DEFAULT_SEVERITY_WEIGHTS;
   const totalChanges = (opts.totalAdditions ?? 0) + (opts.totalDeletions ?? 0);
 
   // PR 规模因子：小 PR (≤100行) 因子 1.5，大 PR (≥2000行) 因子 0.5
@@ -363,7 +368,7 @@ export function calculateScore(
 
   let penalty = 0;
   for (const issue of issues) {
-    const w = SEVERITY_WEIGHTS[issue.severity] || 0;
+    const w = weights[issue.severity] || 0;
     const confidenceFactor = Math.max(0.3, issue.confidence || 0.5);
     penalty += w * confidenceFactor;
   }
