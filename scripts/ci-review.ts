@@ -157,7 +157,7 @@ async function main() {
   const commentBody = buildPRComment(result, PR_URL);
 
   // 4. Post comment to PR
-  const { Octokit } = await import("octokit");
+  const { Octokit } = await import("@octokit/rest");
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
   // 从 GITHUB_REPOSITORY 环境变量获取 owner/repo
