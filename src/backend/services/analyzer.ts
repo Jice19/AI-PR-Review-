@@ -337,24 +337,34 @@ ${context.fullContent.slice(0, 5000)}
 // ========== 入口：完整分析流水线 ==========
 
 export async function runFullAnalysis(context: ReviewContext) {
-  console.log(`[Analysis] Stage 1/3: summarize (${context.files.length} files)`);
-  const summary = await analyzeSummary(context);
-  console.log(`[Analysis] Stage 1/3 完成`);
+  const totalFiles = context.files.length;
 
-  console.log(`[Analysis] Stage 2/3: file risks (${context.files.length} files)`);
-  const issues = await analyzeFiles(context.files, context.relatedFiles);
-  console.log(`[Analysis] Stage 2/3 完成: ${issues.length} issues`);
+  // Stage 1+2 并行：Summary 和 File Risk 互不依赖
+  console.log(`[Analysis] Stage 1+2 并行: summarize + file risks (${totalFiles} files)`);
+  const [summary, issues] = await Promise.all([
+    analyzeSummary(context),
+    analyzeFiles(context.files, context.relatedFiles),
+  ]);
+  console.log(`[Analysis] Stage 1+2 完成: ${issues.length} issues`);
 
-  console.log(`[Analysis] Stage 3/3: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
-  for (const issue of issues) {
-    if (issue.severity === "CRITICAL" || issue.severity === "HIGH") {
-      const fullContent =
-        context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
-      issue.suggestion = (await analyzeSuggestion(issue, {
-        codeSnippet: issue.codeSnippet,
-        fullContent,
-      })) as Suggestion | undefined;
-    }
+  console.log(`[Analysis] Stage 2/2: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
+  // 批量并行生成建议（每批 5 条）
+  const highPriorityIssues = issues.filter(
+    i => i.severity === "CRITICAL" || i.severity === "HIGH"
+  );
+  const suggestionBatchSize = 5;
+  for (let i = 0; i < highPriorityIssues.length; i += suggestionBatchSize) {
+    const batch = highPriorityIssues.slice(i, i + suggestionBatchSize);
+    await Promise.all(
+      batch.map(async (issue) => {
+        const fullContent =
+          context.files.find((f) => f.path === issue.filePath)?.fullContent || "";
+        issue.suggestion = (await analyzeSuggestion(issue, {
+          codeSnippet: issue.codeSnippet,
+          fullContent,
+        })) as Suggestion | undefined;
+      })
+    );
   }
 
   // 计算综合评分
@@ -392,7 +402,7 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
 
 **文件变更**: ${context.files.length} 个 | **发现问题**: ${issues.length} 个`;
 
-  console.log(`[Analysis] Stage 3/3 完成. score: ${score}, decision: ${decision}`);
+  console.log(`[Analysis] Stage 2/2 完成. score: ${score}, decision: ${decision}`);
 
   return {
     summary: summaryText,
