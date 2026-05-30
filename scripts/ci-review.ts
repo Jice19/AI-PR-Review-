@@ -12,6 +12,7 @@
 
 import { GitHubService } from "../src/backend/lib/github";
 import { runFullAnalysis } from "../src/backend/services/analyzer";
+import { buildPRComment } from "../src/backend/lib/pr-comment";
 
 const PR_URL = process.argv[2];
 
@@ -28,112 +29,6 @@ if (!process.env.GITHUB_TOKEN) {
 if (!process.env.DEEPSEEK_API_KEY) {
   console.error("错误: 未设置 DEEPSEEK_API_KEY");
   process.exit(1);
-}
-
-// ====== Markdown 评论构建 ======
-
-const SEVERITY_LABELS: Record<string, string> = {
-  CRITICAL: "CRITICAL",
-  HIGH: "HIGH",
-  MEDIUM: "MEDIUM",
-  LOW: "LOW",
-};
-
-function buildPRComment(result: Awaited<ReturnType<typeof runFullAnalysis>>, prUrl: string): string {
-  const issues = result.issues || [];
-  const totalIssues = issues.length;
-  const score = result.overallScore ?? 0;
-
-  const countBySev: Record<string, number> = {};
-  for (const i of issues) {
-    countBySev[i.severity] = (countBySev[i.severity] || 0) + 1;
-  }
-
-  const scoreColor = score >= 80 ? "success" : score >= 60 ? "orange" : "red";
-  const lines: string[] = [];
-
-  lines.push(`## 🤖 AI Code Review`);
-  lines.push("");
-
-  // Score badge
-  lines.push(`![Score](https://img.shields.io/badge/Score-${score}%2F100-${scoreColor})`);
-  lines.push(`**Decision**: ${result.decision} — ${result.decisionReason}`);
-  lines.push("");
-
-  // Issue counts
-  if (totalIssues > 0) {
-    const parts: string[] = [];
-    if (countBySev.CRITICAL) parts.push(`${countBySev.CRITICAL} Critical`);
-    if (countBySev.HIGH) parts.push(`${countBySev.HIGH} High`);
-    if (countBySev.MEDIUM) parts.push(`${countBySev.MEDIUM} Medium`);
-    if (countBySev.LOW) parts.push(`${countBySev.LOW} Low`);
-    lines.push(`### Found ${totalIssues} Issues`);
-    lines.push(`> ${parts.join(" · ")}`);
-    lines.push("");
-  } else {
-    lines.push("### ✅ No Issues Found");
-    lines.push("");
-  }
-
-  // Issues by severity (collapsed)
-  const severityOrder = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
-  for (const sev of severityOrder) {
-    const sevIssues = issues.filter((i: { severity: string }) => i.severity === sev);
-    if (sevIssues.length === 0) continue;
-
-    lines.push(`<details>`);
-    lines.push(`<summary><strong>${SEVERITY_LABELS[sev]}</strong> (${sevIssues.length})</summary>`);
-    lines.push("");
-
-    for (const issue of sevIssues) {
-      const suggestion = (issue as { suggestion?: { description?: string } }).suggestion;
-      lines.push(`#### ${issue.title}`);
-      lines.push(`- **File**: \`${issue.filePath}:${issue.lineStart}\``);
-      lines.push(`- **Category**: ${issue.category}`);
-      lines.push(`- **Confidence**: ${Math.round(issue.confidence * 100)}%`);
-      lines.push("");
-      lines.push(issue.description);
-      lines.push("");
-
-      if (issue.codeSnippet) {
-        lines.push("<details>");
-        lines.push("<summary>Code</summary>");
-        lines.push("");
-        lines.push("```");
-        lines.push(issue.codeSnippet.slice(0, 2000));
-        lines.push("```");
-        lines.push("");
-        lines.push("</details>");
-        lines.push("");
-      }
-
-      if (suggestion?.description) {
-        lines.push(`> 💡 **Fix**: ${suggestion.description}`);
-        lines.push("");
-      }
-    }
-
-    lines.push("</details>");
-    lines.push("");
-  }
-
-  // Summary
-  if (result.summary) {
-    lines.push("---");
-    lines.push("");
-    lines.push("<details>");
-    lines.push("<summary>Full Summary</summary>");
-    lines.push("");
-    lines.push(result.summary.slice(0, 5000));
-    lines.push("");
-    lines.push("</details>");
-    lines.push("");
-  }
-
-  lines.push("---");
-  lines.push(`*Automated review for ${prUrl}*`);
-
-  return lines.join("\n");
 }
 
 // ====== Main ======
@@ -154,7 +49,15 @@ async function main() {
   console.log(`[CI-Review] 分析完成 (${Date.now() - startTime}ms), score=${result.overallScore}, issues=${result.issues.length}`);
 
   // 3. Build comment
-  const commentBody = buildPRComment(result, PR_URL);
+  const commentBody = buildPRComment({
+    prTitle: context.prTitle,
+    summary: result.summary,
+    overallScore: result.overallScore,
+    decision: result.decision,
+    decisionReason: result.decisionReason,
+    issues: result.issues,
+    prUrl: PR_URL,
+  });
 
   // 4. Post comment to PR
   const { Octokit } = await import("@octokit/rest");

@@ -2,123 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parsePRUrl, GitHubService } from "@/backend/lib/github";
 import { prisma } from "@/backend/lib/prisma";
 import { createReview, analyzePRInBackground } from "@/backend/services/review";
-
-const SEVERITY_LABELS: Record<string, string> = {
-  CRITICAL: "CRITICAL",
-  HIGH: "HIGH",
-  MEDIUM: "MEDIUM",
-  LOW: "LOW",
-};
-
-const DECISION_EMOJI: Record<string, string> = {
-  APPROVE: "✅",
-  COMMENT: "💬",
-  REQUEST_CHANGES: "❌",
-};
-
-function buildPRCommentMarkdown(review: {
-  prTitle: string;
-  summary: string | null;
-  overallScore: number | null;
-  decision: string | null;
-  decisionReason: string | null;
-  issues: Array<{
-    severity: string;
-    title: string;
-    filePath: string;
-    lineStart: number;
-    description: string;
-    suggestion?: unknown;
-  }>;
-}): string {
-  const issues = review.issues || [];
-  const totalIssues = issues.length;
-
-  // Count by severity
-  const countBySev: Record<string, number> = {};
-  for (const i of issues) {
-    countBySev[i.severity] = (countBySev[i.severity] || 0) + 1;
-  }
-
-  const score = review.overallScore ?? null;
-  const decisionEmoji = DECISION_EMOJI[review.decision || ""] || "";
-  const decisionLabel = review.decision || "N/A";
-
-  const lines: string[] = [];
-
-  lines.push(`## ${decisionEmoji} AI Code Review: ${review.prTitle}`);
-  lines.push("");
-
-  // Score + Decision badge
-  if (score !== null) {
-    const scoreColor = score >= 80 ? "green" : score >= 60 ? "orange" : "red";
-    lines.push(`| | |`);
-    lines.push(`|---|---|`);
-    lines.push(`| **Score** | ![](https://img.shields.io/badge/${score}%2F100-${scoreColor}) |`);
-    lines.push(`| **Decision** | ${decisionEmoji} ${decisionLabel}${review.decisionReason ? ` — ${review.decisionReason}` : ""} |`);
-    lines.push("");
-  }
-
-  // Issue summary
-  if (totalIssues > 0) {
-    lines.push(`### Issues Found: ${totalIssues}`);
-    lines.push("");
-    const parts: string[] = [];
-    if (countBySev.CRITICAL) parts.push(`${countBySev.CRITICAL} critical`);
-    if (countBySev.HIGH) parts.push(`${countBySev.HIGH} high`);
-    if (countBySev.MEDIUM) parts.push(`${countBySev.MEDIUM} medium`);
-    if (countBySev.LOW) parts.push(`${countBySev.LOW} low`);
-    lines.push(`> ${parts.join(" · ")}`);
-    lines.push("");
-
-    // Top issues by severity
-    const severityOrder = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
-    for (const sev of severityOrder) {
-      const sevIssues = issues.filter((i) => i.severity === sev);
-      if (sevIssues.length === 0) continue;
-
-      lines.push(`<details>`);
-      lines.push(`<summary><strong>${SEVERITY_LABELS[sev]}</strong> (${sevIssues.length})</summary>`);
-      lines.push("");
-      for (const issue of sevIssues) {
-        lines.push(`- **${issue.title}** — \`${issue.filePath}:${issue.lineStart}\``);
-        lines.push(`  ${issue.description.slice(0, 200)}`);
-        if (issue.suggestion) {
-          const sug = issue.suggestion as Record<string, unknown>;
-          if (sug.description) {
-            lines.push(`  > 💡 ${sug.description}`);
-          }
-        }
-      }
-      lines.push("");
-      lines.push(`</details>`);
-      lines.push("");
-    }
-  } else {
-    lines.push("### ✅ No Issues Found");
-    lines.push("");
-    lines.push("Code quality looks good, no issues were detected.");
-    lines.push("");
-  }
-
-  // Summary excerpt
-  if (review.summary) {
-    lines.push("---");
-    lines.push("");
-    lines.push("<details>");
-    lines.push("<summary>Full Summary</summary>");
-    lines.push("");
-    lines.push(review.summary.slice(0, 5000));
-    lines.push("");
-    lines.push("</details>");
-    lines.push("");
-  }
-
-  lines.push("---");
-  lines.push(`*Automated review by [AI Preview Tool](https://github.com)*`);
-
-  return lines.join("\n");
-}
+import { buildPRComment } from "@/backend/lib/pr-comment";
 
 async function getSystemUserId(): Promise<string | null> {
   // 优先使用环境变量指定的用户 ID
@@ -250,19 +134,21 @@ export async function POST(request: NextRequest) {
         });
         if (!completedReview || completedReview.status !== "COMPLETED") return;
 
-        const commentBody = buildPRCommentMarkdown({
+        const commentBody = buildPRComment({
           prTitle: completedReview.prTitle,
           summary: completedReview.summary,
           overallScore: completedReview.overallScore,
           decision: completedReview.decision,
           decisionReason: completedReview.decisionReason,
           issues: completedReview.issues.map((i) => ({
-            severity: i.severity,
-            title: i.title,
             filePath: i.filePath,
             lineStart: i.lineStart,
+            severity: i.severity,
+            category: i.category,
+            title: i.title,
             description: i.description,
-            suggestion: i.suggestion,
+            codeSnippet: i.codeSnippet,
+            suggestion: i.suggestion as { description?: string } | null,
           })),
         });
 
