@@ -257,115 +257,45 @@ export function ReviewReport({ review, onBack, streamText, errorMsg, progress }:
           </div>
         </div>
 
-        {/* Issues — 按来源分组 */}
+        {/* Issues */}
         {severityGroups.length > 0 && (
           <div className="mt-8 space-y-3 animate-fade-in-up">
             <h2 className="text-lg font-semibold">发现的问题</h2>
             <SeverityBar severityGroups={severityGroups} />
-
-            {/* Semgrep 静态分析结果 */}
-            {(() => {
-              const semgrepIssues = allIssuesFlat.filter((i) => i.source === "semgrep");
-              if (semgrepIssues.length === 0) return null;
-              const semgrepGroups = groupIssuesBySeverity(semgrepIssues);
-              return (
-                <div className="glass rounded-xl overflow-hidden mt-3">
-                  <div className="px-5 py-3 border-b border-border/30 bg-emerald-50/50">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                        🛡 确定性检测
+            <div className="glass rounded-xl overflow-hidden mt-3">
+              {severityGroups.map(({ severity, issues }, gi) => {
+                const cfg = SEVERITY_CONFIG[severity];
+                const collapsed = collapsedIssues[severity];
+                return (
+                  <div key={severity} className={gi > 0 ? "border-t border-border/50" : ""}>
+                    <button
+                      onClick={() => setCollapsedIssues((p) => ({ ...p, [severity]: !p[severity] }))}
+                      className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-muted/30 transition-colors"
+                    >
+                      <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${cfg.bg} ${cfg.color}`}>
+                        {collapsed ? "+" : "−"}
                       </span>
-                      <span className="text-xs text-muted-foreground">AST 模式匹配 · 置信度 100% · Semgrep</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{semgrepIssues.length} 个</span>
-                    </div>
-                  </div>
-                  {semgrepGroups.map(({ severity, issues }, gi) => {
-                    const cfg = SEVERITY_CONFIG[severity];
-                    const collapsed = collapsedIssues[`semgrep-${severity}`];
-                    return (
-                      <div key={`semgrep-${severity}`} className={gi > 0 ? "border-t border-border/50" : ""}>
-                        <button
-                          onClick={() => setCollapsedIssues((p) => ({ ...p, [`semgrep-${severity}`]: !p[`semgrep-${severity}`] }))}
-                          className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-muted/30 transition-colors"
-                        >
-                          <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${cfg.bg} ${cfg.color}`}>
-                            {collapsed ? "+" : "−"}
-                          </span>
-                          <span className={`text-sm font-semibold ${cfg.color}`}>{cfg.label}问题</span>
-                          <span className="text-xs text-muted-foreground">{issues.length} 个</span>
-                          <span className="flex-1" />
-                          <svg className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-180"}`}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-                        {!collapsed && (
-                          <div className="border-t border-border/30 px-5 py-4 space-y-4">
-                            {issues.map((issue, ii) => (
-                              <div key={ii} className="rounded-lg border border-border/30 bg-muted/10 p-4">
-                                <IssueCard issue={issue} index={ii} />
-                              </div>
-                            ))}
+                      <span className={`text-sm font-semibold ${cfg.color}`}>{cfg.label}问题</span>
+                      <span className="text-xs text-muted-foreground">{issues.length} 个</span>
+                      <span className="flex-1" />
+                      <svg className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-180"}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {!collapsed && (
+                      <div className="border-t border-border/30 px-5 py-4 space-y-4">
+                        {issues.map((issue, ii) => (
+                          <div key={ii} className="rounded-lg border border-border/30 bg-muted/10 p-4">
+                            <IssueCard issue={issue} index={ii} />
                           </div>
-                        )}
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-
-            {/* LLM AI 分析结果 */}
-            {(() => {
-              const llmIssues = allIssuesFlat.filter((i) => i.source !== "semgrep");
-              if (llmIssues.length === 0) return null;
-              const llmGroups = groupIssuesBySeverity(llmIssues);
-              return (
-                <div className="glass rounded-xl overflow-hidden mt-4">
-                  <div className="px-5 py-3 border-b border-border/30 bg-indigo-50/50">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                        🤖 AI 分析
-                      </span>
-                      <span className="text-xs text-muted-foreground">LLM 推理检测 · DeepSeek</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{llmIssues.length} 个</span>
-                    </div>
+                    )}
                   </div>
-                  {llmGroups.map(({ severity, issues }, gi) => {
-                    const cfg = SEVERITY_CONFIG[severity];
-                    const collapsed = collapsedIssues[`llm-${severity}`];
-                    return (
-                      <div key={`llm-${severity}`} className={gi > 0 ? "border-t border-border/50" : ""}>
-                        <button
-                          onClick={() => setCollapsedIssues((p) => ({ ...p, [`llm-${severity}`]: !p[`llm-${severity}`] }))}
-                          className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-muted/30 transition-colors"
-                        >
-                          <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${cfg.bg} ${cfg.color}`}>
-                            {collapsed ? "+" : "−"}
-                          </span>
-                          <span className={`text-sm font-semibold ${cfg.color}`}>{cfg.label}问题</span>
-                          <span className="text-xs text-muted-foreground">{issues.length} 个</span>
-                          <span className="flex-1" />
-                          <svg className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${collapsed ? "" : "rotate-180"}`}
-                            fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-                        {!collapsed && (
-                          <div className="border-t border-border/30 px-5 py-4 space-y-4">
-                            {issues.map((issue, ii) => (
-                              <div key={ii} className="rounded-lg border border-border/30 bg-muted/10 p-4">
-                                <IssueCard issue={issue} index={ii} />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -512,11 +442,6 @@ export function ReviewReport({ review, onBack, streamText, errorMsg, progress }:
                             <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${cfg.bg} ${cfg.color}`}>
                               {issue.severity}
                             </span>
-                            {issue.source === "semgrep" && (
-                              <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700">
-                                🛡 静态检测
-                              </span>
-                            )}
                             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{issue.category}</span>
                             <span className="text-xs text-muted-foreground font-mono ml-auto">{issue.filePath}:{issue.lineStart}</span>
                           </div>
