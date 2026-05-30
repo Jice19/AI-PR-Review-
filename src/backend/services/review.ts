@@ -185,24 +185,7 @@ export async function analyzePRInBackground(
     const hasRag = ragResults.length > 0;
     console.log(`[Analysis:${reviewId}] RAG 预热完成: ${ragResults.length} 条历史反馈命中`);
 
-    // Stage 1.6: Semgrep 静态分析预处理
-    const { runSemgrepScan: runSemgrep, getSemgrepCoveredCategories } =
-      await import("@/backend/services/static-analyzer");
-    const semgrepIssues = runSemgrep(context.files.map((f) => f.path));
-    const coveredCats = getSemgrepCoveredCategories(semgrepIssues);
-    console.log(`[Analysis:${reviewId}] Semgrep 完成: ${semgrepIssues.length} 个确定性问题, 覆盖 ${coveredCats.length} 个类别`);
-    if (semgrepIssues.length > 0) {
-      // 保存 Semgrep 结果并推送
-      await saveIssues(reviewId, semgrepIssues.map((i) => ({
-        ...i,
-        id: `${reviewId}-${i.id}`,
-      })));
-      for (const issue of semgrepIssues) {
-        emitSSE(reviewId, "issue", issue);
-      }
-    }
-
-    // Stage 1.7: 加载审查策略（ReviewPolicy）
+    // Stage 1.6: 加载审查策略（ReviewPolicy）
     const { filterFilesByPolicy, filterIssuesByPolicy, getSeverityWeights } =
       await import("@/backend/lib/review-policy");
     const reviewRecord = await prisma.review.findUnique({
@@ -246,7 +229,7 @@ export async function analyzePRInBackground(
           const related = (context.relatedFiles[file.path] || [])
             .map((r) => `// ${r.path}\n${r.content.slice(0, 3000)}`)
             .join("\n\n");
-          return analyzeFileRisk(file, related, { reviewId, stage: "file-risk" }, hasRag ? ragResults : undefined, coveredCats);
+          return analyzeFileRisk(file, related, { reviewId, stage: "file-risk" }, hasRag ? ragResults : undefined);
         })
       );
       const batchIssues = batchResults.flat();
@@ -336,14 +319,8 @@ export async function analyzePRInBackground(
       console.warn(`[Analysis:${reviewId}] ${suggestionErrors}/${highCritical.length} 条建议生成失败，跳过`);
     }
 
-    // 合并 Semgrep 静态分析结果
-    const mergedIssues = [...semgrepIssues, ...issues];
-
-    // 按策略过滤低置信度问题（Semgrep 1.0 不受影响）
-    const filteredIssues = filterIssuesByPolicy(mergedIssues, policyConfig);
-    if (filteredIssues.length < mergedIssues.length) {
-      console.log(`[Analysis:${reviewId}] 策略过滤: ${mergedIssues.length} → ${filteredIssues.length} 个问题`);
-    }
+    // 按策略过滤低置信度问题
+    const filteredIssues = filterIssuesByPolicy(issues, policyConfig);
     if (filteredIssues.length < issues.length) {
       console.log(`[Analysis:${reviewId}] 策略过滤: ${issues.length} → ${filteredIssues.length} 个问题`);
     }
