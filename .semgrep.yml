@@ -1,0 +1,78 @@
+rules:
+  # ===== XSS =====
+  - id: xss-innerhtml
+    patterns:
+      - pattern-either:
+          - pattern: $X.innerHTML = $Y
+          - pattern: $X.outerHTML = $Y
+    message: |
+      使用 innerHTML/outerHTML 赋值存在 XSS 风险。
+      如果 $Y 来自用户输入且未经过 DOMPurify 等清洗，攻击者可注入恶意脚本。
+      建议：使用 textContent 或先调用 DOMPurify.sanitize()。
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: XSS
+      cwe: "CWE-79"
+
+  - id: xss-dangerously-setinnerhtml
+    pattern: dangerouslySetInnerHTML={{ __html: $X }}
+    message: |
+      React dangerouslySetInnerHTML 直接将字符串渲染为 HTML，存在 XSS 风险。
+      确保 $X 已通过 DOMPurify 清洗，否则攻击者可注入恶意脚本。
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: XSS
+      cwe: "CWE-79"
+
+  # ===== SQL 注入 =====
+  - id: sql-injection-raw-query
+    patterns:
+      - pattern-either:
+          - pattern: prisma.$queryRawUnsafe(...)
+          - pattern: $DB.$queryRawUnsafe(...)
+          - pattern: $X.$queryRawUnsafe($Y)
+    message: |
+      $queryRawUnsafe 会将字符串直接拼接为 SQL 查询，存在 SQL 注入风险。
+      如果 $Y 包含用户输入且未做参数化处理，攻击者可注入恶意 SQL。
+      建议：使用 $queryRaw 配合 Prisma 参数化变量（如 $queryRaw`...WHERE id = ${id}`）。
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: SQL_INJECTION
+      cwe: "CWE-89"
+
+  # ===== 硬编码密钥 =====
+  - id: hardcoded-secret
+    patterns:
+      - pattern-either:
+          - pattern: |
+              const $NAME = "$VALUE"
+          - pattern: |
+              var $NAME = "$VALUE"
+    metavariable-regex:
+      metavariable: $NAME
+      regex: (?i)(api_?key|api_?secret|secret_?key|token|password|passwd|access_?key)
+    message: |
+      变量 $NAME 的值为硬编码字符串，可能是敏感凭证。
+      敏感凭证应通过环境变量管理（process.env.XXX），不应硬编码在源代码中。
+      如果这是测试值，请添加明确注释说明。
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: INFO_LEAK
+      cwe: "CWE-798"
+
+  # ===== eval() 调用 =====
+  - id: unsafe-dynamic-eval
+    pattern: eval($X)
+    message: |
+      eval() 会执行传入的任意字符串作为代码，极其危险。
+      如果 $X 来自用户输入，攻击者可以执行任意代码。
+      几乎在所有场景下都存在更安全的替代方案（JSON.parse、动态 import 等）。
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: CODE_QUALITY
+      cwe: "CWE-95"

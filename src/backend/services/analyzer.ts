@@ -1,6 +1,7 @@
 import { callFlash, callLLMStream } from "@/backend/lib/llm";
 import { formatFeedbackPrompt } from "@/backend/services/feedback-learner";
 import type { FeedbackExample } from "@/backend/services/feedback-learner";
+import { runSemgrepScan, getSemgrepCoveredCategories } from "@/backend/services/static-analyzer";
 
 // 文件风险分析使用 Flash（快），建议生成使用 Pro（深）
 import type { ReviewContext, Issue, Suggestion } from "@/backend/types";
@@ -181,7 +182,8 @@ export async function analyzeFileRisk(
   file: ReviewContext["files"][0],
   relatedContext: string,
   audit?: { reviewId: string; stage: string },
-  feedbackExamples?: FeedbackExample[]
+  feedbackExamples?: FeedbackExample[],
+  skipCategories?: string[]
 ): Promise<Issue[]> {
   const prompt = LAYER_PROMPTS[file.layer] || BACKEND_PROMPT;
 
@@ -195,12 +197,18 @@ export async function analyzeFileRisk(
     ? `\n## 历史反馈参考\n${formatFeedbackPrompt(feedbackExamples)}\n`
     : "";
 
+  // Semgrep 已覆盖的类别提示
+  const semgrepHint =
+    skipCategories?.length
+      ? `\n## 静态分析已覆盖（无需再检查）\n以下类别已由 Semgrep 确定性检出，请跳过：${skipCategories.join(", ")}\n`
+      : "";
+
   const result = await callFlash<RiskOutput>(
     [
       {
         role: "user",
         content: `${prompt}
-${feedbackSection}
+${feedbackSection}${semgrepHint}
 ## 文件信息
 - 路径: ${file.path}
 - 层级: ${file.layer}
@@ -250,6 +258,7 @@ ${relatedContext || "(无关联上下文)"}
 export async function analyzeFiles(
   files: ReviewContext["files"],
   relatedFiles: ReviewContext["relatedFiles"],
+  skipCategories: string[] = [],
   batchSize = 10
 ): Promise<Issue[]> {
   const allIssues: Issue[] = [];
@@ -261,7 +270,7 @@ export async function analyzeFiles(
         const related = (relatedFiles[file.path] || [])
           .map((r) => `// ${r.path}\n${r.content.slice(0, 3000)}`)
           .join("\n\n");
-        return analyzeFileRisk(file, related);
+        return analyzeFileRisk(file, related, undefined, undefined, skipCategories);
       })
     );
     allIssues.push(...results.flat());
@@ -381,13 +390,21 @@ export function calculateScore(
 export async function runFullAnalysis(context: ReviewContext) {
   const totalFiles = context.files.length;
 
+  // Stage 0: Semgrep 静态分析预处理
+  console.log(`[Analysis] Stage 0: Semgrep 静态分析 (${totalFiles} files)`);
+  const filePaths = context.files.map((f) => f.path);
+  const semgrepIssues = runSemgrepScan(filePaths);
+  const coveredCats = getSemgrepCoveredCategories(semgrepIssues);
+  console.log(`[Analysis] Stage 0 完成: ${semgrepIssues.length} 个确定性问题, 覆盖 ${coveredCats.length} 个类别`);
+
   // Stage 1+2 并行：Summary 和 File Risk 互不依赖
   console.log(`[Analysis] Stage 1+2 并行: summarize + file risks (${totalFiles} files)`);
-  const [summary, issues] = await Promise.all([
+  const [summary, llmIssues] = await Promise.all([
     analyzeSummary(context),
-    analyzeFiles(context.files, context.relatedFiles),
+    analyzeFiles(context.files, context.relatedFiles, coveredCats),
   ]);
-  console.log(`[Analysis] Stage 1+2 完成: ${issues.length} issues`);
+  const issues = [...semgrepIssues, ...llmIssues];
+  console.log(`[Analysis] Stage 1+2 完成: ${issues.length} issues (${semgrepIssues.length} semgrep + ${llmIssues.length} llm)`);
 
   console.log(`[Analysis] Stage 2/2: suggestions for ${issues.filter(i => i.severity === "CRITICAL" || i.severity === "HIGH").length} high/critical issues`);
   // 批量并行生成建议（每批 5 条）
