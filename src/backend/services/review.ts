@@ -152,7 +152,11 @@ export async function clearIssues(reviewId: string) {
 }
 
 /** 后台异步执行 AI 分析（不阻塞调用方，异常自行处理） */
-export async function analyzePRInBackground(reviewId: string, prUrl: string) {
+export async function analyzePRInBackground(
+  reviewId: string,
+  prUrl: string,
+  opts?: { onComplete?: () => Promise<void> }
+) {
   console.log(`[Analysis:${reviewId}] ===== 后台分析开始 =====`);
 
   // 延迟导入避免循环依赖
@@ -344,6 +348,15 @@ ${summary.focusAreas.map((a) => `- ${a}`).join("\n")}
       decisionReason,
     });
     console.log(`[Analysis:${reviewId}] ===== 分析完成 =====`);
+
+    // 可选回调（如 webhook 触发的分析完成后发 PR 评论）
+    if (opts?.onComplete) {
+      try {
+        await opts.onComplete();
+      } catch (cbError) {
+        console.error(`[Analysis:${reviewId}] onComplete 回调失败:`, cbError);
+      }
+    }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[Analysis:${reviewId}] ===== 分析失败 =====`, msg);

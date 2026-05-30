@@ -158,6 +158,21 @@ export class GitHubService {
     }
   }
 
+  /** 向 PR 发布评论 */
+  async postPRComment(
+    owner: string,
+    repo: string,
+    prNumber: number,
+    body: string
+  ) {
+    await this.octokit.rest.issues.createComment({
+      owner,
+      repo,
+      issue_number: prNumber,
+      body,
+    });
+  }
+
   /** 一站式获取 PR 完整上下文 */
   async fetchReviewContext(url: string): Promise<ReviewContext> {
     const { owner, repo, prNumber } = parsePRUrl(url);
