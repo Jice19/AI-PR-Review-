@@ -1,5 +1,6 @@
 import { prisma } from "@/backend/lib/prisma";
 import { embedText } from "@/backend/lib/embedding";
+import type { Suggestion } from "@/backend/types";
 
 // ========== 类型 ==========
 
@@ -9,6 +10,7 @@ export interface FeedbackExample {
   codeSnippet: string;
   issueTitle: string;
   issueDescription: string;
+  suggestion?: Suggestion | null;
   similarity: number;     // 余弦相似度 (0-1)
 }
 
@@ -164,6 +166,9 @@ async function retrieveByType(
       layer: string;
       codeSnippet: string;
       similarity: number;
+      issueTitle: string | null;
+      issueDescription: string | null;
+      suggestion: unknown;
     }>
   >(
     `SELECT
@@ -172,8 +177,12 @@ async function retrieveByType(
        fv."feedback",
        fv."layer",
        fv."codeSnippet",
-       1 - (fv.embedding <=> $1::vector) AS similarity
+       1 - (fv.embedding <=> $1::vector) AS similarity,
+       ri."title" AS "issueTitle",
+       ri."description" AS "issueDescription",
+       ri."suggestion"
      FROM "FeedbackVector" fv
+     LEFT JOIN "ReviewIssue" ri ON fv."issueId" = ri."id"
      WHERE fv."feedback" = $2
        AND fv."layer" = $3
        AND 1 - (fv.embedding <=> $1::vector) >= $4
@@ -190,8 +199,9 @@ async function retrieveByType(
     feedback: row.feedback,
     layer: row.layer,
     codeSnippet: row.codeSnippet,
-    issueTitle: "",
-    issueDescription: "",
+    issueTitle: row.issueTitle || "",
+    issueDescription: row.issueDescription || "",
+    suggestion: (row.suggestion as Suggestion) || null,
     similarity: Number(row.similarity),
   }));
 }
@@ -211,12 +221,36 @@ export function formatFeedbackPrompt(examples: FeedbackExample[]): string {
 
   if (useful.length > 0) {
     parts.push("### 历史正确识别案例（USEFUL）");
-    parts.push("以下是你过去正确发现的类似问题，请参考识别模式：\n");
+    parts.push("以下是你过去正确发现的类似问题及其修复建议，请参考识别模式和修复方案：\n");
     for (const ex of useful) {
       parts.push(`**相似度**: ${(ex.similarity * 100).toFixed(0)}%`);
-      parts.push(`\`\`\``);
+      if (ex.issueTitle) {
+        parts.push(`**问题**: ${ex.issueTitle}`);
+      }
+      parts.push("**问题代码**:");
+      parts.push("```");
       parts.push(ex.codeSnippet.slice(0, 2000));
-      parts.push(`\`\`\`\n`);
+      parts.push("```");
+      if (ex.suggestion) {
+        const sug = ex.suggestion;
+        parts.push(`**上次修复方案** (${sug.fixType}): ${sug.description}`);
+        if (sug.codeBefore) {
+          parts.push("**修复前**:");
+          parts.push("```");
+          parts.push(sug.codeBefore.slice(0, 2000));
+          parts.push("```");
+        }
+        if (sug.codeAfter) {
+          parts.push("**修复后**:");
+          parts.push("```");
+          parts.push(sug.codeAfter.slice(0, 2000));
+          parts.push("```");
+        }
+        if (sug.securityRationale) {
+          parts.push(`**安全性说明**: ${sug.securityRationale}`);
+        }
+      }
+      parts.push("");
     }
   }
 
